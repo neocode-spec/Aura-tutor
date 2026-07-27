@@ -87,14 +87,50 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
 if "student" not in st.session_state:
     st.title("🌺 Iris Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
-    with st.form("login"):
-        name = st.text_input("Your name")
-        email = st.text_input("Email")
-        stream = st.selectbox("Your stream", list(config.STREAMS.keys()))
-        submitted = st.form_submit_button("Start learning")
-        if submitted and name and email:
-            st.session_state.student = db.get_or_create_student(name, email, stream)
-            st.rerun()
+
+    signup_tab, login_tab = st.tabs(["Create account", "Log in"])
+
+    # ---- Show/hide password toggle (must live outside the form to rerun live) ----
+    with signup_tab:
+        show_pw_signup = st.checkbox("👁️ Show password", key="show_pw_signup")
+        with st.form("signup"):
+            name = st.text_input("Your name")
+            email = st.text_input("Email (Gmail or any email)")
+            password = st.text_input(
+                "Password",
+                type="default" if show_pw_signup else "password",
+            )
+            stream = st.selectbox("Your stream", list(config.STREAMS.keys()))
+            submitted = st.form_submit_button("Create account & start learning")
+            if submitted:
+                if not (name and email and password):
+                    st.error("Please fill in your name, email, and password.")
+                elif len(password) < 6:
+                    st.error("Password should be at least 6 characters.")
+                else:
+                    try:
+                        st.session_state.student = db.create_student(name, email, password, stream)
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(f"{e} Try the 'Log in' tab instead.")
+
+    with login_tab:
+        show_pw_login = st.checkbox("👁️ Show password", key="show_pw_login")
+        with st.form("login"):
+            login_email = st.text_input("Email")
+            login_password = st.text_input(
+                "Password",
+                type="default" if show_pw_login else "password",
+            )
+            login_submitted = st.form_submit_button("Log in")
+            if login_submitted:
+                student_row = db.authenticate_student(login_email, login_password)
+                if student_row:
+                    st.session_state.student = student_row
+                    st.rerun()
+                else:
+                    st.error("Incorrect email or password.")
+
     st.stop()
 
 student = st.session_state.student
