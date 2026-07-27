@@ -6,12 +6,25 @@ Set NEON_DATABASE_URL in your environment or Render settings:
 """
 
 import os
+import hashlib
+import secrets as pysecrets
 import streamlit as st
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import date
 
-NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL") or st.secrets.get("NEON_DATABASE_URL", "")
+def _get_secret(key: str, default: str = "") -> str:
+    """Read from env var first, then Streamlit secrets if available (won't crash if no secrets.toml exists)."""
+    value = os.getenv(key)
+    if value:
+        return value
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+NEON_DATABASE_URL = _get_secret("NEON_DATABASE_URL")
 
 
 def get_connection():
@@ -26,6 +39,8 @@ def init_schema():
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
+        password_hash TEXT,
+        password_salt TEXT,
         stream TEXT,
         tier TEXT DEFAULT 'Iris Alpha',
         tier_active_until DATE,
@@ -68,23 +83,58 @@ def init_schema():
     conn.close()
 
 
+# ---------------------------------------------------------------- passwords --
+def _hash_password(password: str, salt: str = None):
+    """PBKDF2-HMAC-SHA256, 200k iterations. Returns (hash_hex, salt_hex)."""
+    if salt is None:
+        salt = pysecrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000
+    ).hex()
+    return hashed, salt
+
+
+def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
+    if not stored_hash or not stored_salt:
+        return False
+    check_hash, _ = _hash_password(password, stored_salt)
+    return pysecrets.compare_digest(check_hash, stored_hash)
+
+
 # ---------------------------------------------------------------- students --
-def get_or_create_student(name: str, email: str, stream: str):
+def find_student_by_email(email: str):
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM students WHERE email = %s", (email,))
         row = cur.fetchone()
-        if row:
-            conn.close()
-            return row
+    conn.close()
+    return row
+
+
+def create_student(name: str, email: str, password: str, stream: str):
+    """Creates a new account. Raises ValueError if the email is already taken."""
+    if find_student_by_email(email):
+        raise ValueError("An account with this email already exists.")
+    hashed, salt = _hash_password(password)
+    conn = get_connection()
+    with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO students (name, email, stream) VALUES (%s, %s, %s) RETURNING *",
-            (name, email, stream),
+            """INSERT INTO students (name, email, password_hash, password_salt, stream)
+               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+            (name, email, hashed, salt, stream),
         )
         row = cur.fetchone()
     conn.commit()
     conn.close()
     return row
+
+
+def authenticate_student(email: str, password: str):
+    """Returns the student row if the password is correct, else None."""
+    row = find_student_by_email(email)
+    if row and _verify_password(password, row["password_hash"], row["password_salt"]):
+        return row
+    return None
 
 
 def get_student_tier(student_id) -> str:
