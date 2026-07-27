@@ -79,6 +79,9 @@ def init_schema():
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(schema_sql)
+        # Upgrade older tables that existed before password columns were added
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash TEXT")
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_salt TEXT")
     conn.commit()
     conn.close()
 
