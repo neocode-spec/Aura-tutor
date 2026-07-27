@@ -41,6 +41,9 @@ def init_schema():
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT,
         password_salt TEXT,
+        security_question TEXT,
+        security_answer_hash TEXT,
+        security_answer_salt TEXT,
         stream TEXT,
         tier TEXT DEFAULT 'Iris Alpha',
         tier_active_until DATE,
@@ -82,6 +85,9 @@ def init_schema():
         # Upgrade older tables that existed before password columns were added
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_salt TEXT")
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_question TEXT")
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_salt TEXT")
     conn.commit()
     conn.close()
 
@@ -114,22 +120,54 @@ def find_student_by_email(email: str):
     return row
 
 
-def create_student(name: str, email: str, password: str, stream: str):
+def create_student(name: str, email: str, password: str, stream: str,
+                    security_question: str, security_answer: str):
     """Creates a new account. Raises ValueError if the email is already taken."""
     if find_student_by_email(email):
         raise ValueError("An account with this email already exists.")
     hashed, salt = _hash_password(password)
+    # normalize the answer (case/whitespace-insensitive) before hashing
+    ans_hashed, ans_salt = _hash_password(security_answer.strip().lower())
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO students (name, email, password_hash, password_salt, stream)
-               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-            (name, email, hashed, salt, stream),
+            """INSERT INTO students
+               (name, email, password_hash, password_salt,
+                security_question, security_answer_hash, security_answer_salt, stream)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+            (name, email, hashed, salt, security_question, ans_hashed, ans_salt, stream),
         )
         row = cur.fetchone()
     conn.commit()
     conn.close()
     return row
+
+
+def get_security_question(email: str):
+    """Returns the security question for an email, or None if no account/question exists."""
+    row = find_student_by_email(email)
+    if row and row.get("security_question"):
+        return row["security_question"]
+    return None
+
+
+def reset_password_with_security_answer(email: str, security_answer: str, new_password: str) -> bool:
+    """Verifies the security answer and, if correct, sets a new password. Returns True on success."""
+    row = find_student_by_email(email)
+    if not row or not row.get("security_answer_hash"):
+        return False
+    if not _verify_password(security_answer.strip().lower(), row["security_answer_hash"], row["security_answer_salt"]):
+        return False
+    new_hash, new_salt = _hash_password(new_password)
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE students SET password_hash = %s, password_salt = %s WHERE id = %s",
+            (new_hash, new_salt, row["id"]),
+        )
+    conn.commit()
+    conn.close()
+    return True
 
 
 def authenticate_student(email: str, password: str):
