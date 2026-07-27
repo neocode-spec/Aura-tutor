@@ -84,6 +84,14 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
 # -----------------------------------------------------------------------------
 # 5. Login (creates memory profile)
 # -----------------------------------------------------------------------------
+SECURITY_QUESTIONS = [
+    "What is your favorite subject?",
+    "What is the name of your primary school?",
+    "What is your best friend's first name?",
+    "What city were you born in?",
+    "What is your father's first name?",
+]
+
 if "student" not in st.session_state:
     st.title("🌺 Iris Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
@@ -100,16 +108,20 @@ if "student" not in st.session_state:
                 "Password",
                 type="default" if show_pw_signup else "password",
             )
+            security_question = st.selectbox("Security question (used if you forget your password)", SECURITY_QUESTIONS)
+            security_answer = st.text_input("Your answer")
             stream = st.selectbox("Your stream", list(config.STREAMS.keys()))
             submitted = st.form_submit_button("Create account & start learning")
             if submitted:
-                if not (name and email and password):
-                    st.error("Please fill in your name, email, and password.")
+                if not (name and email and password and security_answer):
+                    st.error("Please fill in your name, email, password, and security answer.")
                 elif len(password) < 6:
                     st.error("Password should be at least 6 characters.")
                 else:
                     try:
-                        st.session_state.student = db.create_student(name, email, password, stream)
+                        st.session_state.student = db.create_student(
+                            name, email, password, stream, security_question, security_answer
+                        )
                         st.rerun()
                     except ValueError as e:
                         st.error(f"{e} Try the 'Log in' tab instead.")
@@ -130,6 +142,30 @@ if "student" not in st.session_state:
                     st.rerun()
                 else:
                     st.error("Incorrect email or password.")
+
+        with st.expander("Forgot password?"):
+            reset_email = st.text_input("Your email", key="reset_email")
+            if reset_email:
+                question = db.get_security_question(reset_email)
+                if question:
+                    st.caption(f"Security question: **{question}**")
+                    show_pw_reset = st.checkbox("👁️ Show new password", key="show_pw_reset")
+                    with st.form("reset_password"):
+                        reset_answer = st.text_input("Your answer")
+                        new_password = st.text_input(
+                            "New password",
+                            type="default" if show_pw_reset else "password",
+                        )
+                        reset_submitted = st.form_submit_button("Reset password")
+                        if reset_submitted:
+                            if len(new_password) < 6:
+                                st.error("New password should be at least 6 characters.")
+                            elif db.reset_password_with_security_answer(reset_email, reset_answer, new_password):
+                                st.success("Password reset! Go to the Log in tab and sign in with your new password.")
+                            else:
+                                st.error("That answer doesn't match. Try again.")
+                else:
+                    st.info("No account found with that email, or no security question set up on it.")
 
     st.stop()
 
