@@ -143,6 +143,46 @@ def create_student(name: str, email: str, password: str, stream: str,
     return row
 
 
+def find_or_create_student(name: str, email: str, stream: str = "Science"):
+    """
+    Simple login — just name and email, no password. If the email exists,
+    logs them back into their existing profile (memory intact). If not,
+    creates a new one on the spot.
+    """
+    row = find_student_by_email(email)
+    if row:
+        return row
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO students (name, email, stream) VALUES (%s, %s, %s) RETURNING *""",
+            (name, email, stream),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row
+
+
+def find_or_create_google_student(name: str, email: str, default_stream: str = "Science"):
+    """
+    For students who signed in with Google — no password needed, Google already verified them.
+    """
+    row = find_student_by_email(email)
+    if row:
+        return row
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO students (name, email, stream) VALUES (%s, %s, %s) RETURNING *""",
+            (name, email, default_stream),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row
+
+
 def get_security_question(email: str):
     """Returns the security question for an email, or None if no account/question exists."""
     row = find_student_by_email(email)
