@@ -19,15 +19,22 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. Custom CSS
+# 2. Custom CSS (Borderless Chat Input & Seamless Model Pill)
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
+    /* Global App Background */
     .stApp { background-color: #0e0e11; color: #e0e0e0; }
+    
+    /* Sidebar Styling */
     section[data-testid="stSidebar"] { background-color: #16161c; border-right: 1px solid #262633; }
+    
+    /* Standard Text Inputs */
     .stTextInput > div > div > input {
         background-color: #1a1a24; color: #ffffff; border: 1px solid #33334d; border-radius: 8px;
     }
+    
+    /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #b81d24 0%, #800020 100%);
         color: white; border: none; border-radius: 8px; font-weight: 600; transition: all 0.3s ease;
@@ -36,9 +43,40 @@ st.markdown("""
         background: linear-gradient(135deg, #d62828 0%, #9e002b 100%);
         box-shadow: 0 4px 12px rgba(184, 29, 36, 0.4);
     }
+    
+    /* Chat Messages */
     [data-testid="stChatMessage"] {
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
+    }
+
+    /* --------------------------------------------------- */
+    /* BORDERLESS CHAT INPUT & MODEL SELECTOR CUSTOM CSS */
+    /* --------------------------------------------------- */
+    
+    /* Make the chat input container borderless */
+    [data-testid="stChatInput"] {
+        border: none !important;
+        box-shadow: none !important;
+        background-color: transparent !important;
+    }
+    [data-testid="stChatInput"] > div {
+        border: none !important;
+        background-color: #16161f !important;
+        border-radius: 14px !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
+    }
+    
+    /* Make the inline model select dropdown borderless & pill-styled */
+    div[data-baseweb="select"] > div {
+        background-color: #16161f !important;
+        border: none !important;
+        box-shadow: none !important;
+        border-radius: 12px !important;
+        color: #e0e0e0 !important;
+    }
+    div[data-baseweb="select"] {
+        border: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -122,7 +160,7 @@ else:
     tier_info = default_tier_info
 
 # -----------------------------------------------------------------------------
-# 6. Sidebar — Stream, Subject, Exam Level, Tier & Upgrade
+# 6. Sidebar
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🌺 **Iris Tutor Studio**")
@@ -197,30 +235,54 @@ if not groq_api_key:
 client = Groq(api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
-# 9. Main Chat Interface Header & Inline Model Dropdown
+# 9. Main Header
 # -----------------------------------------------------------------------------
 st.title("🌺 Iris | Exam Prep Tutor")
+st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}**")
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}**")
+# -----------------------------------------------------------------------------
+# 10. Load persistent chat history from Neon
+# -----------------------------------------------------------------------------
+if "messages" not in st.session_state:
+    past = db.load_recent_history(student["id"])
+    if past:
+        st.session_state.messages = [{"role": m["role"], "content": m["content"]} for m in past]
+    else:
+        st.session_state.messages = [{
+            "role": "assistant",
+            "content": f"Hello! I'm **Iris** 🌺. Ready to master **{subject}** for your {exam_target}?\n\nWhat specific topic or question are we tackling today?"
+        }]
 
-with col2:
+# -----------------------------------------------------------------------------
+# 11. Render Chat Messages
+# -----------------------------------------------------------------------------
+for msg in st.session_state.messages:
+    avatar = "🌺" if msg["role"] == "assistant" else "👤"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
+
+# -----------------------------------------------------------------------------
+# 12. Borderless Chat Input & Integrated Model Switcher
+# -----------------------------------------------------------------------------
+input_col, model_col = st.columns([84, 16], vertical_alignment="bottom")
+
+with model_col:
     model_options = {
         "Alpha 🔽": "Alpha",
         "Alpha+ 🔽": "Alpha+"
     }
     selected_label = st.selectbox(
-        "Model",
+        "Engine",
         options=list(model_options.keys()),
         index=0 if current_tier == "Alpha" else 1,
         label_visibility="collapsed"
     )
     selected_model_tier = model_options[selected_label]
 
-# -----------------------------------------------------------------------------
-# 10. System prompt
-# -----------------------------------------------------------------------------
+with input_col:
+    user_input = st.chat_input("Ask a question, request a practice drill, or paste a problem...")
+
+# System prompt resolution
 IRIS_SYSTEM_PROMPT = f"""
 You are Iris, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
 Your goal is to prepare students to achieve top scores in their exams.
@@ -240,37 +302,19 @@ YOUR TEACHING METHODOLOGY:
 5. Tone: Encouraging, structured, patient, but firm on technical accuracy.
 """
 
-# -----------------------------------------------------------------------------
-# 11. Load persistent chat history from Neon
-# -----------------------------------------------------------------------------
-if "messages" not in st.session_state:
-    past = db.load_recent_history(student["id"])
-    if past:
-        st.session_state.messages = [{"role": m["role"], "content": m["content"]} for m in past]
-    else:
-        st.session_state.messages = [{
-            "role": "assistant",
-            "content": f"Hello! I'm **Iris** 🌺. Ready to master **{subject}** for your {exam_target}?\n\nWhat specific topic or question are we tackling today?"
-        }]
-
-# -----------------------------------------------------------------------------
-# 12. Chat UI & Message Loop
-# -----------------------------------------------------------------------------
-for msg in st.session_state.messages:
-    avatar = "🌺" if msg["role"] == "assistant" else "👤"
-    with st.chat_message(msg["role"], avatar=avatar):
-        st.markdown(msg["content"])
-
-if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
+if user_input:
     if selected_model_tier == "Alpha+" and current_tier == free_tier_name:
         st.warning("The Alpha+ model requires a full model subscription (₦500/mo). Please upgrade in the sidebar to use this model.")
         st.stop()
 
     st.session_state.messages.append({"role": "user", "content": user_input})
     db.save_message(student["id"], subject, exam_target, "user", user_input)
-    with st.chat_message("user", avatar="👤"):
-        st.markdown(user_input)
+    st.rerun()
 
+# -----------------------------------------------------------------------------
+# 13. Trigger AI Response if last message is from user
+# -----------------------------------------------------------------------------
+if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     api_messages = [{"role": "system", "content": IRIS_SYSTEM_PROMPT}] + [
         {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
     ]
@@ -302,3 +346,4 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
         if current_tier == free_tier_name:
             db.increment_usage(student["id"])
+        st.rerun()
