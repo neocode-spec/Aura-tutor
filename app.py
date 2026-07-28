@@ -40,19 +40,11 @@ st.markdown("""
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
     }
-    
-    /* Sleek Model Badge / Dropdown styling */
-    .model-selector-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 15px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. DB init
+# 3. DB Init
 # -----------------------------------------------------------------------------
 try:
     db.init_schema()
@@ -89,7 +81,7 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     st.query_params.clear()
 
 # -----------------------------------------------------------------------------
-# 5. Login (creates memory profile)
+# 5. Session & Auto-Login Persistence (Prevents losing session on refresh)
 # -----------------------------------------------------------------------------
 if "student" not in st.session_state:
     st.title("🌺 Iris Tutor Studio")
@@ -104,15 +96,31 @@ if "student" not in st.session_state:
             if not (name and email):
                 st.error("Please enter your name and email.")
             else:
-                st.session_state.student = db.find_or_create_student(name.strip(), email.strip().lower(), stream)
+                student_record = db.find_or_create_student(name.strip(), email.strip().lower(), stream)
+                st.session_state.student = student_record
                 st.rerun()
 
     st.caption("Already used Iris before? Just enter the same email — your history comes right back.")
     st.stop()
 
 student = st.session_state.student
+
+# Safe Tier Retrieval (Prevents KeyError: 'Alpha')
 current_tier = db.get_student_tier(student["id"])
-tier_info = config.MODEL_TIERS.get(current_tier, config.MODEL_TIERS["Alpha"])
+free_tier_name = getattr(config, "FREE_TIER_NAME", "Alpha")
+
+# Fallback definition in case config.py hasn't been updated on server yet
+default_tier_info = {
+    "model": "llama-3.1-8b-instant",
+    "daily_question_limit": 9,
+    "price_ngn": 0,
+    "description": "Base tier: 9 free questions per day."
+}
+
+if hasattr(config, "MODEL_TIERS"):
+    tier_info = config.MODEL_TIERS.get(current_tier, config.MODEL_TIERS.get("Alpha", default_tier_info))
+else:
+    tier_info = default_tier_info
 
 # -----------------------------------------------------------------------------
 # 6. Sidebar — subject, exam level, stream-filtered subjects, tier
@@ -129,33 +137,48 @@ with st.sidebar:
     )
 
     subject = st.selectbox("📚 Select Subject", config.subjects_for_stream(stream))
-
     exam_target = st.selectbox("🎯 Target Exam / Level", config.EXAM_LEVELS)
 
     st.divider()
-    st.markdown(f"### Current plan: **{current_tier}**")
-    st.caption(tier_info["description"])
 
-    # Show Upgrade Option only if user is on Free "Alpha" tier
-    if current_tier == "Alpha":
+    # Dropdown UI for models: Sonnet 5 medium ( Alpha 2 Flash dropdown arrow )
+    model_options = {
+        "Sonnet 5 medium ( Alpha 2 Flash 🔽 )": "Alpha",
+        "Sonnet 5 medium ( Alpha+ 🔽 )": "Alpha+"
+    }
+    
+    selected_label = st.selectbox(
+        "🤖 Select Engine Model",
+        options=list(model_options.keys()),
+        index=0 if current_tier == "Alpha" else 1
+    )
+    selected_model_tier = model_options[selected_label]
+
+    st.markdown(f"### Active Plan: **{current_tier}**")
+    st.caption(tier_info.get("description", ""))
+
+    if current_tier == free_tier_name:
         used_today = db.get_today_usage(student["id"])
-        limit = tier_info["daily_question_limit"]
+        limit = tier_info.get("daily_question_limit", 9)
         st.progress(min(used_today / limit, 1.0), text=f"{used_today}/{limit} questions today")
 
-        st.markdown("#### Upgrade Plan")
-        tinfo = config.MODEL_TIERS["Alpha+"]
-        if st.button(f"Upgrade to Alpha+ — ₦{tinfo['price_ngn']}/mo", use_container_width=True, key="upgrade_alpha_plus"):
+        st.markdown("#### Upgrade Tier")
+        alpha_plus_price = 500
+        if hasattr(config, "MODEL_TIERS") and "Alpha+" in config.MODEL_TIERS:
+            alpha_plus_price = config.MODEL_TIERS["Alpha+"].get("price_ngn", 500)
+
+        if st.button(f"Upgrade to Alpha+ — ₦{alpha_plus_price}/mo", use_container_width=True, key="upgrade_Alpha_plus"):
             try:
                 redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
                 tx_ref, link = payment.initiate_payment(
                     student_email=student["email"],
                     student_name=student["name"],
                     tier="Alpha+",
-                    amount_ngn=tinfo["price_ngn"],
+                    amount_ngn=alpha_plus_price,
                     redirect_url=redirect_url,
                 )
-                db.create_payment_record(student["id"], tx_ref, "Alpha+", tinfo["price_ngn"])
-                st.link_button("Click to complete payment (₦500) →", link, use_container_width=True)
+                db.create_payment_record(student["id"], tx_ref, "Alpha+", alpha_plus_price)
+                st.link_button("Click to complete payment →", link, use_container_width=True)
             except Exception as e:
                 st.error(f"Could not start payment: {e}")
 
@@ -167,13 +190,14 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # 7. Enforce free-tier daily cap
 # -----------------------------------------------------------------------------
-if current_tier == "Alpha":
+if current_tier == free_tier_name:
     used_today = db.get_today_usage(student["id"])
-    if used_today >= tier_info["daily_question_limit"]:
+    limit = tier_info.get("daily_question_limit", 9)
+    if used_today >= limit:
         st.title("🌺 Iris | Exam Prep Tutor")
         st.warning(
-            f"You've used all {tier_info['daily_question_limit']} questions for today on the Alpha tier. "
-            "Come back tomorrow, or upgrade to Alpha+ (₦500/mo) in the sidebar for full model access."
+            f"You've used all {limit} free questions for today on Alpha. "
+            "Come back tomorrow, or upgrade to Alpha+ in the sidebar for full model access."
         )
         st.stop()
 
@@ -198,6 +222,7 @@ CURRENT CONTEXT:
 - Subject: {subject}
 - Target Exam: {exam_target}
 - Plan: {current_tier}
+- Engine: {selected_model_tier}
 
 YOUR TEACHING METHODOLOGY:
 1. Active Recall First: After explaining a concept, ask 1 sharp follow-up question to test understanding.
@@ -208,7 +233,7 @@ YOUR TEACHING METHODOLOGY:
 """
 
 # -----------------------------------------------------------------------------
-# 10. Load persistent chat history from Neon
+# 10. Load persistent chat history from Neon on first load of session
 # -----------------------------------------------------------------------------
 if "messages" not in st.session_state:
     past = db.load_recent_history(student["id"])
@@ -221,39 +246,24 @@ if "messages" not in st.session_state:
         }]
 
 # -----------------------------------------------------------------------------
-# 11. Chat Header & Embedded Model Selector Dropdown
+# 11. Chat UI
 # -----------------------------------------------------------------------------
-col1, col2 = st.columns([3, 1])
+st.title("🌺 Iris | Exam Prep Tutor")
+st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Model: **{selected_label}**")
 
-with col1:
-    st.title("🌺 Iris | Exam Prep Tutor")
-
-with col2:
-    # Model Selector directly inside the write-up area (like Claude / ChatGPT UI)
-    available_models = ["Alpha (Free - Longer Token)"]
-    if current_tier == "Alpha+":
-        available_models.append("Alpha+ (Full Model - ₦500)")
-
-    selected_model_label = st.selectbox(
-        "Select Engine",
-        options=available_models,
-        label_visibility="collapsed"
-    )
-
-st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
-
-# -----------------------------------------------------------------------------
-# 12. Chat Messages & Rendering
-# -----------------------------------------------------------------------------
 for msg in st.session_state.messages:
     avatar = "🌺" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
+    # Require paid subscription if trying to use Alpha+ model
+    if selected_model_tier == "Alpha+" and current_tier == free_tier_name:
+        st.warning("The Alpha+ model requires a full model subscription (₦500/mo). Please upgrade in the sidebar to use this model.")
+        st.stop()
+
     st.session_state.messages.append({"role": "user", "content": user_input})
     db.save_message(student["id"], subject, exam_target, "user", user_input)
-    
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_input)
 
@@ -264,12 +274,13 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
     with st.chat_message("assistant", avatar="🌺"):
         response_placeholder = st.empty()
         full_response = ""
-        try:
-            # Active selected model from config mapping
-            active_model_name = tier_info["model"]
+        
+        # Safely resolve model string
+        model_id = "llama-3.1-8b-instant" if selected_model_tier == "Alpha" else "llama-3.3-70b-versatile"
 
+        try:
             completion = client.chat.completions.create(
-                model=active_model_name,
+                model=model_id,
                 messages=api_messages,
                 temperature=0.5,
                 max_tokens=2048,
@@ -279,7 +290,6 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
                 content = chunk.choices[0].delta.content or ""
                 full_response += content
                 response_placeholder.markdown(full_response + "▌")
-            
             response_placeholder.markdown(full_response)
         except Exception as e:
             st.error(f"Error calling Groq API: {str(e)}")
@@ -287,5 +297,5 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
     if full_response:
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
-        if current_tier == "Alpha":
+        if current_tier == free_tier_name:
             db.increment_usage(student["id"])
