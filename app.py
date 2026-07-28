@@ -81,7 +81,7 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     st.query_params.clear()
 
 # -----------------------------------------------------------------------------
-# 5. Session & Auto-Login Persistence (Prevents losing session on refresh)
+# 5. Session & Auto-Login Persistence
 # -----------------------------------------------------------------------------
 if "student" not in st.session_state:
     st.title("🌺 Iris Tutor Studio")
@@ -105,11 +105,10 @@ if "student" not in st.session_state:
 
 student = st.session_state.student
 
-# Safe Tier Retrieval (Prevents KeyError: 'Alpha')
+# Safe Tier Retrieval
 current_tier = db.get_student_tier(student["id"])
 free_tier_name = getattr(config, "FREE_TIER_NAME", "Alpha")
 
-# Fallback definition in case config.py hasn't been updated on server yet
 default_tier_info = {
     "model": "llama-3.1-8b-instant",
     "daily_question_limit": 9,
@@ -123,7 +122,7 @@ else:
     tier_info = default_tier_info
 
 # -----------------------------------------------------------------------------
-# 6. Sidebar — subject, exam level, stream-filtered subjects, tier
+# 6. Sidebar — Stream, Subject, Exam Level, Tier & Upgrade
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🌺 **Iris Tutor Studio**")
@@ -141,20 +140,7 @@ with st.sidebar:
 
     st.divider()
 
-    # Dropdown UI for models: Sonnet 5 medium ( Alpha 2 Flash dropdown arrow )
-    model_options = {
-        "Sonnet 5 medium ( Alpha 2 Flash 🔽 )": "Alpha",
-        "Sonnet 5 medium ( Alpha+ 🔽 )": "Alpha+"
-    }
-    
-    selected_label = st.selectbox(
-        "🤖 Select Engine Model",
-        options=list(model_options.keys()),
-        index=0 if current_tier == "Alpha" else 1
-    )
-    selected_model_tier = model_options[selected_label]
-
-    st.markdown(f"### Active Plan: **{current_tier}**")
+    st.markdown(f"### Active Plan: **Iris {current_tier}**")
     st.caption(tier_info.get("description", ""))
 
     if current_tier == free_tier_name:
@@ -211,7 +197,29 @@ if not groq_api_key:
 client = Groq(api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
-# 9. System prompt
+# 9. Main Chat Interface Header & Inline Model Dropdown
+# -----------------------------------------------------------------------------
+st.title("🌺 Iris | Exam Prep Tutor")
+
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}**")
+
+with col2:
+    model_options = {
+        "Alpha 🔽": "Alpha",
+        "Alpha+ 🔽": "Alpha+"
+    }
+    selected_label = st.selectbox(
+        "Model",
+        options=list(model_options.keys()),
+        index=0 if current_tier == "Alpha" else 1,
+        label_visibility="collapsed"
+    )
+    selected_model_tier = model_options[selected_label]
+
+# -----------------------------------------------------------------------------
+# 10. System prompt
 # -----------------------------------------------------------------------------
 IRIS_SYSTEM_PROMPT = f"""
 You are Iris, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
@@ -233,7 +241,7 @@ YOUR TEACHING METHODOLOGY:
 """
 
 # -----------------------------------------------------------------------------
-# 10. Load persistent chat history from Neon on first load of session
+# 11. Load persistent chat history from Neon
 # -----------------------------------------------------------------------------
 if "messages" not in st.session_state:
     past = db.load_recent_history(student["id"])
@@ -246,18 +254,14 @@ if "messages" not in st.session_state:
         }]
 
 # -----------------------------------------------------------------------------
-# 11. Chat UI
+# 12. Chat UI & Message Loop
 # -----------------------------------------------------------------------------
-st.title("🌺 Iris | Exam Prep Tutor")
-st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Model: **{selected_label}**")
-
 for msg in st.session_state.messages:
     avatar = "🌺" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
-    # Require paid subscription if trying to use Alpha+ model
     if selected_model_tier == "Alpha+" and current_tier == free_tier_name:
         st.warning("The Alpha+ model requires a full model subscription (₦500/mo). Please upgrade in the sidebar to use this model.")
         st.stop()
@@ -275,7 +279,6 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
         response_placeholder = st.empty()
         full_response = ""
         
-        # Safely resolve model string
         model_id = "llama-3.1-8b-instant" if selected_model_tier == "Alpha" else "llama-3.3-70b-versatile"
 
         try:
