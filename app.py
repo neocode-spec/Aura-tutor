@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. Custom CSS (kept from your original)
+# 2. Custom CSS
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -39,6 +39,14 @@ st.markdown("""
     [data-testid="stChatMessage"] {
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
+    }
+    
+    /* Sleek Model Badge / Dropdown styling */
+    .model-selector-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,7 +72,6 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     payment_row = db.get_payment(tx_ref)
 
     if verified and payment_row and payment_row["status"] != "successful":
-        # double-check the amount actually matches what we charged for
         if int(float(verified["amount"])) >= payment_row["amount_ngn"]:
             db.mark_payment_status(tx_ref, "successful", transaction_id)
             active_until = date.today() + timedelta(days=30)
@@ -105,7 +112,7 @@ if "student" not in st.session_state:
 
 student = st.session_state.student
 current_tier = db.get_student_tier(student["id"])
-tier_info = config.MODEL_TIERS[current_tier]
+tier_info = config.MODEL_TIERS.get(current_tier, config.MODEL_TIERS["Alpha"])
 
 # -----------------------------------------------------------------------------
 # 6. Sidebar — subject, exam level, stream-filtered subjects, tier
@@ -115,8 +122,11 @@ with st.sidebar:
     st.caption(f"Welcome back, {student['name']}")
     st.divider()
 
-    stream = st.selectbox("🧭 Stream", list(config.STREAMS.keys()),
-                           index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0)
+    stream = st.selectbox(
+        "🧭 Stream", 
+        list(config.STREAMS.keys()),
+        index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0
+    )
 
     subject = st.selectbox("📚 Select Subject", config.subjects_for_stream(stream))
 
@@ -126,29 +136,28 @@ with st.sidebar:
     st.markdown(f"### Current plan: **{current_tier}**")
     st.caption(tier_info["description"])
 
-    if current_tier == config.FREE_TIER_NAME:
+    # Show Upgrade Option only if user is on Free "Alpha" tier
+    if current_tier == "Alpha":
         used_today = db.get_today_usage(student["id"])
         limit = tier_info["daily_question_limit"]
         st.progress(min(used_today / limit, 1.0), text=f"{used_today}/{limit} questions today")
 
-        st.markdown("#### Upgrade")
-        for tname, tinfo in config.MODEL_TIERS.items():
-            if tname == config.FREE_TIER_NAME:
-                continue
-            if st.button(f"Upgrade to {tname} — ₦{tinfo['price_ngn']}/mo", use_container_width=True, key=f"upgrade_{tname}"):
-                try:
-                    redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
-                    tx_ref, link = payment.initiate_payment(
-                        student_email=student["email"],
-                        student_name=student["name"],
-                        tier=tname,
-                        amount_ngn=tinfo["price_ngn"],
-                        redirect_url=redirect_url,
-                    )
-                    db.create_payment_record(student["id"], tx_ref, tname, tinfo["price_ngn"])
-                    st.link_button("Click to complete payment →", link, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Could not start payment: {e}")
+        st.markdown("#### Upgrade Plan")
+        tinfo = config.MODEL_TIERS["Alpha+"]
+        if st.button(f"Upgrade to Alpha+ — ₦{tinfo['price_ngn']}/mo", use_container_width=True, key="upgrade_alpha_plus"):
+            try:
+                redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
+                tx_ref, link = payment.initiate_payment(
+                    student_email=student["email"],
+                    student_name=student["name"],
+                    tier="Alpha+",
+                    amount_ngn=tinfo["price_ngn"],
+                    redirect_url=redirect_url,
+                )
+                db.create_payment_record(student["id"], tx_ref, "Alpha+", tinfo["price_ngn"])
+                st.link_button("Click to complete payment (₦500) →", link, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not start payment: {e}")
 
     st.divider()
     if st.button("🗑️ Clear chat display", use_container_width=True):
@@ -158,13 +167,13 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # 7. Enforce free-tier daily cap
 # -----------------------------------------------------------------------------
-if current_tier == config.FREE_TIER_NAME:
+if current_tier == "Alpha":
     used_today = db.get_today_usage(student["id"])
     if used_today >= tier_info["daily_question_limit"]:
         st.title("🌺 Iris | Exam Prep Tutor")
         st.warning(
-            f"You've used all {tier_info['daily_question_limit']} free questions for today. "
-            "Come back tomorrow, or upgrade in the sidebar for unlimited access."
+            f"You've used all {tier_info['daily_question_limit']} questions for today on the Alpha tier. "
+            "Come back tomorrow, or upgrade to Alpha+ (₦500/mo) in the sidebar for full model access."
         )
         st.stop()
 
@@ -199,7 +208,7 @@ YOUR TEACHING METHODOLOGY:
 """
 
 # -----------------------------------------------------------------------------
-# 10. Load persistent chat history from Neon on first load of the session
+# 10. Load persistent chat history from Neon
 # -----------------------------------------------------------------------------
 if "messages" not in st.session_state:
     past = db.load_recent_history(student["id"])
@@ -212,11 +221,30 @@ if "messages" not in st.session_state:
         }]
 
 # -----------------------------------------------------------------------------
-# 11. Chat UI
+# 11. Chat Header & Embedded Model Selector Dropdown
 # -----------------------------------------------------------------------------
-st.title("🌺 Iris | Exam Prep Tutor")
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    st.title("🌺 Iris | Exam Prep Tutor")
+
+with col2:
+    # Model Selector directly inside the write-up area (like Claude / ChatGPT UI)
+    available_models = ["Alpha (Free - Longer Token)"]
+    if current_tier == "Alpha+":
+        available_models.append("Alpha+ (Full Model - ₦500)")
+
+    selected_model_label = st.selectbox(
+        "Select Engine",
+        options=available_models,
+        label_visibility="collapsed"
+    )
+
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
+# -----------------------------------------------------------------------------
+# 12. Chat Messages & Rendering
+# -----------------------------------------------------------------------------
 for msg in st.session_state.messages:
     avatar = "🌺" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
@@ -225,6 +253,7 @@ for msg in st.session_state.messages:
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     db.save_message(student["id"], subject, exam_target, "user", user_input)
+    
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_input)
 
@@ -236,8 +265,11 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
         response_placeholder = st.empty()
         full_response = ""
         try:
+            # Active selected model from config mapping
+            active_model_name = tier_info["model"]
+
             completion = client.chat.completions.create(
-                model=tier_info["model"],
+                model=active_model_name,
                 messages=api_messages,
                 temperature=0.5,
                 max_tokens=2048,
@@ -247,6 +279,7 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
                 content = chunk.choices[0].delta.content or ""
                 full_response += content
                 response_placeholder.markdown(full_response + "▌")
+            
             response_placeholder.markdown(full_response)
         except Exception as e:
             st.error(f"Error calling Groq API: {str(e)}")
@@ -254,5 +287,5 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
     if full_response:
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
-        if current_tier == config.FREE_TIER_NAME:
+        if current_tier == "Alpha":
             db.increment_usage(student["id"])
