@@ -40,6 +40,16 @@ st.markdown("""
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
     }
+    /* Borderless, minimal dropdowns — like a model picker */
+    div[data-testid="stSelectbox"] > div > div {
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stSelectbox"] > div > div:hover {
+        background-color: #1a1a24 !important;
+        border-radius: 8px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,25 +171,7 @@ with st.sidebar:
         used_today = db.get_today_usage(student["id"])
         limit = tier_info["daily_question_limit"]
         st.progress(min(used_today / limit, 1.0), text=f"{used_today}/{limit} questions today")
-
-        st.markdown("#### Upgrade")
-        for tname, tinfo in config.MODEL_TIERS.items():
-            if tname == config.FREE_TIER_NAME:
-                continue
-            if st.button(f"Upgrade to {tname} — ₦{tinfo['price_ngn']}/mo", use_container_width=True, key=f"upgrade_{tname}"):
-                try:
-                    redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
-                    tx_ref, link = payment.initiate_payment(
-                        student_email=student["email"],
-                        student_name=student["name"],
-                        tier=tname,
-                        amount_ngn=tinfo["price_ngn"],
-                        redirect_url=redirect_url,
-                    )
-                    db.create_payment_record(student["id"], tx_ref, tname, tinfo["price_ngn"])
-                    st.link_button("Click to complete payment →", link, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Could not start payment: {e}")
+        st.caption("Switch to Alpha+ anytime using the dropdown above the chat box.")
 
     st.divider()
     if st.button("🗑️ Clear chat display", use_container_width=True):
@@ -230,10 +222,11 @@ YOUR TEACHING METHODOLOGY:
 """
 
 # -----------------------------------------------------------------------------
-# 10. Load persistent chat history from Neon on first load of the session
+# 10. Load persistent chat history — resets whenever the student switches subject
 # -----------------------------------------------------------------------------
-if "messages" not in st.session_state:
-    past = db.load_recent_history(student["id"])
+if st.session_state.get("last_subject") != subject:
+    st.session_state.last_subject = subject
+    past = db.load_recent_history(student["id"], subject=subject)
     if past:
         st.session_state.messages = [{"role": m["role"], "content": m["content"]} for m in past]
     else:
@@ -257,27 +250,59 @@ for msg in st.session_state.messages:
 active_model = tier_info["model"]
 active_label = current_tier.replace("Iris ", "")
 premium_used_today = db.get_today_usage(student["id"])
+has_alpha_plus = current_tier == "Iris Alpha+"
+remaining = 0
 
-if current_tier == "Iris Alpha+":
+if has_alpha_plus:
     premium_limit = tier_info["premium_daily_limit"]
     remaining = max(premium_limit - premium_used_today, 0)
-    if remaining > 0:
-        badge_col, picker_col = st.columns([3, 2])
-        with picker_col:
-            use_full = st.selectbox(
-                "Model",
-                [f"Alpha+ · full model ({remaining} left today)", "Alpha · save my requests"],
-                label_visibility="collapsed",
-            )
-        if use_full.startswith("Alpha ·"):
-            active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
-            active_label = "Alpha (saving Alpha+ requests)"
-    else:
-        st.caption("🌸 Alpha+ · out of full-model requests today, running on Alpha until tomorrow.")
+
+alpha_plus_label = f"🌸 Alpha+ · full model ({remaining} left today)" if has_alpha_plus and remaining > 0 else "🌸 Alpha+ · unlock full model"
+
+picker_col, _ = st.columns([2, 3])
+with picker_col:
+    choice = st.selectbox(
+        "Model", ["🌸 Alpha · fast & free", alpha_plus_label],
+        label_visibility="collapsed",
+    )
+
+if choice.startswith("🌸 Alpha+"):
+    if has_alpha_plus and remaining > 0:
+        active_model = config.MODEL_TIERS["Iris Alpha+"]["model"]
+        active_label = "Alpha+"
+    elif has_alpha_plus and remaining == 0:
+        st.caption("Out of full-model requests today — running on Alpha until tomorrow.")
         active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
         active_label = "Alpha (Alpha+ daily limit reached)"
+    else:
+        # Not subscribed yet — send them straight to payment
+        st.info("Alpha+ is ₦500 — unlocks the full-power model for 9 requests/day.")
+        if st.button("Unlock Alpha+ — ₦500", use_container_width=True):
+            try:
+                redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
+                tinfo = config.MODEL_TIERS["Iris Alpha+"]
+                tx_ref, link = payment.initiate_payment(
+                    student_email=student["email"],
+                    student_name=student["name"],
+                    tier="Iris Alpha+",
+                    amount_ngn=tinfo["price_ngn"],
+                    redirect_url=redirect_url,
+                )
+                db.create_payment_record(student["id"], tx_ref, "Iris Alpha+", tinfo["price_ngn"])
+                st.link_button("Click to complete payment →", link, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not start payment: {e}")
+        active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+        active_label = "Alpha"
 else:
-    st.caption(f"🌸 **{active_label}**")
+    active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+    active_label = "Alpha"
+
+active_max_tokens = (
+    config.MODEL_TIERS["Iris Alpha+"]["max_tokens"]
+    if active_model == config.MODEL_TIERS["Iris Alpha+"]["model"]
+    else config.MODEL_TIERS["Iris Alpha"]["max_tokens"]
+)
 
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -297,7 +322,7 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
                 model=active_model,
                 messages=api_messages,
                 temperature=0.5,
-                max_tokens=tier_info["max_tokens"],
+                max_tokens=active_max_tokens,
                 stream=True,
             )
             for chunk in completion:
