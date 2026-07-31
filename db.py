@@ -120,27 +120,33 @@ def find_student_by_email(email: str):
     return row
 
 
-def create_student(name: str, email: str, password: str, stream: str,
-                    security_question: str, security_answer: str):
-    """Creates a new account. Raises ValueError if the email is already taken."""
+def create_student(name: str, email: str, stream: str, security_question: str, security_answer: str):
+    """Creates a new account. No password — the security Q&A IS the login credential."""
     if find_student_by_email(email):
         raise ValueError("An account with this email already exists.")
-    hashed, salt = _hash_password(password)
-    # normalize the answer (case/whitespace-insensitive) before hashing
     ans_hashed, ans_salt = _hash_password(security_answer.strip().lower())
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
             """INSERT INTO students
-               (name, email, password_hash, password_salt,
-                security_question, security_answer_hash, security_answer_salt, stream)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
-            (name, email, hashed, salt, security_question, ans_hashed, ans_salt, stream),
+               (name, email, security_question, security_answer_hash, security_answer_salt, stream)
+               VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
+            (name, email, security_question, ans_hashed, ans_salt, stream),
         )
         row = cur.fetchone()
     conn.commit()
     conn.close()
     return row
+
+
+def authenticate_with_security(email: str, security_answer: str):
+    """Returns the student row if the security answer is correct, else None."""
+    row = find_student_by_email(email)
+    if row and row.get("security_answer_hash") and _verify_password(
+        security_answer.strip().lower(), row["security_answer_hash"], row["security_answer_salt"]
+    ):
+        return row
+    return None
 
 
 def find_or_create_student(name: str, email: str, stream: str = "Science"):
