@@ -19,22 +19,15 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. Custom CSS (Borderless Chat Input & Seamless Model Pill)
+# 2. Custom CSS (kept from your original)
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
-    /* Global App Background */
     .stApp { background-color: #0e0e11; color: #e0e0e0; }
-    
-    /* Sidebar Styling */
     section[data-testid="stSidebar"] { background-color: #16161c; border-right: 1px solid #262633; }
-    
-    /* Standard Text Inputs */
     .stTextInput > div > div > input {
         background-color: #1a1a24; color: #ffffff; border: 1px solid #33334d; border-radius: 8px;
     }
-    
-    /* Buttons */
     .stButton > button {
         background: linear-gradient(135deg, #b81d24 0%, #800020 100%);
         color: white; border: none; border-radius: 8px; font-weight: 600; transition: all 0.3s ease;
@@ -43,46 +36,15 @@ st.markdown("""
         background: linear-gradient(135deg, #d62828 0%, #9e002b 100%);
         box-shadow: 0 4px 12px rgba(184, 29, 36, 0.4);
     }
-    
-    /* Chat Messages */
     [data-testid="stChatMessage"] {
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
-    }
-
-    /* --------------------------------------------------- */
-    /* BORDERLESS CHAT INPUT & MODEL SELECTOR CUSTOM CSS */
-    /* --------------------------------------------------- */
-    
-    /* Make the chat input container borderless */
-    [data-testid="stChatInput"] {
-        border: none !important;
-        box-shadow: none !important;
-        background-color: transparent !important;
-    }
-    [data-testid="stChatInput"] > div {
-        border: none !important;
-        background-color: #16161f !important;
-        border-radius: 14px !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-    }
-    
-    /* Make the inline model select dropdown borderless & pill-styled */
-    div[data-baseweb="select"] > div {
-        background-color: #16161f !important;
-        border: none !important;
-        box-shadow: none !important;
-        border-radius: 12px !important;
-        color: #e0e0e0 !important;
-    }
-    div[data-baseweb="select"] {
-        border: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. DB Init
+# 3. DB init
 # -----------------------------------------------------------------------------
 try:
     db.init_schema()
@@ -102,6 +64,7 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     payment_row = db.get_payment(tx_ref)
 
     if verified and payment_row and payment_row["status"] != "successful":
+        # double-check the amount actually matches what we charged for
         if int(float(verified["amount"])) >= payment_row["amount_ngn"]:
             db.mark_payment_status(tx_ref, "successful", transaction_id)
             active_until = date.today() + timedelta(days=30)
@@ -119,92 +82,104 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     st.query_params.clear()
 
 # -----------------------------------------------------------------------------
-# 5. Session & Auto-Login Persistence
+# 5. Login (creates memory profile)
 # -----------------------------------------------------------------------------
+SECURITY_QUESTIONS = [
+    "What is your favorite subject?",
+    "What is the name of your primary school?",
+    "What is your best friend's first name?",
+    "What city were you born in?",
+    "What is your father's first name?",
+]
+
 if "student" not in st.session_state:
     st.title("🌺 Iris Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
 
-    with st.form("login"):
-        name = st.text_input("Your name")
-        email = st.text_input("Your email")
-        stream = st.selectbox("Your stream", list(config.STREAMS.keys()))
-        submitted = st.form_submit_button("Start learning")
-        if submitted:
-            if not (name and email):
-                st.error("Please enter your name and email.")
-            else:
-                student_record = db.find_or_create_student(name.strip(), email.strip().lower(), stream)
-                st.session_state.student = student_record
-                st.rerun()
+    check_email = st.text_input("Your email", key="check_email").strip().lower()
 
-    st.caption("Already used Iris before? Just enter the same email — your history comes right back.")
+    if check_email:
+        existing_question = db.get_security_question(check_email)
+
+        if existing_question:
+            # ---- Returning student: log in with security answer ----
+            st.caption(f"Welcome back! Security question: **{existing_question}**")
+            with st.form("login"):
+                answer = st.text_input("Your answer")
+                submitted = st.form_submit_button("Log in")
+                if submitted:
+                    row = db.authenticate_with_security(check_email, answer)
+                    if row:
+                        st.session_state.student = row
+                        st.rerun()
+                    else:
+                        st.error("That answer doesn't match. Try again.")
+        else:
+            # ---- New student: sign up with name + security Q&A ----
+            st.caption("New here — let's set up your account.")
+            with st.form("signup"):
+                name = st.text_input("Your name")
+                security_question = st.selectbox("Pick a security question", SECURITY_QUESTIONS)
+                security_answer = st.text_input("Your answer")
+                stream = st.selectbox("Your stream", list(config.STREAMS.keys()))
+                submitted = st.form_submit_button("Create account & start learning")
+                if submitted:
+                    if not (name and security_answer):
+                        st.error("Please enter your name and an answer.")
+                    else:
+                        st.session_state.student = db.create_student(
+                            name.strip(), check_email, stream, security_question, security_answer.strip()
+                        )
+                        st.rerun()
+
     st.stop()
 
 student = st.session_state.student
-
-# Safe Tier Retrieval
 current_tier = db.get_student_tier(student["id"])
-free_tier_name = getattr(config, "FREE_TIER_NAME", "Alpha")
-
-default_tier_info = {
-    "model": "llama-3.1-8b-instant",
-    "daily_question_limit": 9,
-    "price_ngn": 0,
-    "description": "Base tier: 9 free questions per day."
-}
-
-if hasattr(config, "MODEL_TIERS"):
-    tier_info = config.MODEL_TIERS.get(current_tier, config.MODEL_TIERS.get("Alpha", default_tier_info))
-else:
-    tier_info = default_tier_info
+tier_info = config.MODEL_TIERS[current_tier]
 
 # -----------------------------------------------------------------------------
-# 6. Sidebar
+# 6. Sidebar — subject, exam level, stream-filtered subjects, tier
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## 🌺 **Iris Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
     st.divider()
 
-    stream = st.selectbox(
-        "🧭 Stream", 
-        list(config.STREAMS.keys()),
-        index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0
-    )
+    stream = st.selectbox("🧭 Stream", list(config.STREAMS.keys()),
+                           index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0)
 
     subject = st.selectbox("📚 Select Subject", config.subjects_for_stream(stream))
+
     exam_target = st.selectbox("🎯 Target Exam / Level", config.EXAM_LEVELS)
 
     st.divider()
+    st.markdown(f"### Current plan: **{current_tier}**")
+    st.caption(tier_info["description"])
 
-    st.markdown(f"### Active Plan: **Iris {current_tier}**")
-    st.caption(tier_info.get("description", ""))
-
-    if current_tier == free_tier_name:
+    if current_tier == config.FREE_TIER_NAME:
         used_today = db.get_today_usage(student["id"])
-        limit = tier_info.get("daily_question_limit", 9)
+        limit = tier_info["daily_question_limit"]
         st.progress(min(used_today / limit, 1.0), text=f"{used_today}/{limit} questions today")
 
-        st.markdown("#### Upgrade Tier")
-        alpha_plus_price = 500
-        if hasattr(config, "MODEL_TIERS") and "Alpha+" in config.MODEL_TIERS:
-            alpha_plus_price = config.MODEL_TIERS["Alpha+"].get("price_ngn", 500)
-
-        if st.button(f"Upgrade to Alpha+ — ₦{alpha_plus_price}/mo", use_container_width=True, key="upgrade_Alpha_plus"):
-            try:
-                redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
-                tx_ref, link = payment.initiate_payment(
-                    student_email=student["email"],
-                    student_name=student["name"],
-                    tier="Alpha+",
-                    amount_ngn=alpha_plus_price,
-                    redirect_url=redirect_url,
-                )
-                db.create_payment_record(student["id"], tx_ref, "Alpha+", alpha_plus_price)
-                st.link_button("Click to complete payment →", link, use_container_width=True)
-            except Exception as e:
-                st.error(f"Could not start payment: {e}")
+        st.markdown("#### Upgrade")
+        for tname, tinfo in config.MODEL_TIERS.items():
+            if tname == config.FREE_TIER_NAME:
+                continue
+            if st.button(f"Upgrade to {tname} — ₦{tinfo['price_ngn']}/mo", use_container_width=True, key=f"upgrade_{tname}"):
+                try:
+                    redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
+                    tx_ref, link = payment.initiate_payment(
+                        student_email=student["email"],
+                        student_name=student["name"],
+                        tier=tname,
+                        amount_ngn=tinfo["price_ngn"],
+                        redirect_url=redirect_url,
+                    )
+                    db.create_payment_record(student["id"], tx_ref, tname, tinfo["price_ngn"])
+                    st.link_button("Click to complete payment →", link, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Could not start payment: {e}")
 
     st.divider()
     if st.button("🗑️ Clear chat display", use_container_width=True):
@@ -214,14 +189,13 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # 7. Enforce free-tier daily cap
 # -----------------------------------------------------------------------------
-if current_tier == free_tier_name:
+if current_tier == config.FREE_TIER_NAME:
     used_today = db.get_today_usage(student["id"])
-    limit = tier_info.get("daily_question_limit", 9)
-    if used_today >= limit:
+    if used_today >= tier_info["daily_question_limit"]:
         st.title("🌺 Iris | Exam Prep Tutor")
         st.warning(
-            f"You've used all {limit} free questions for today on Alpha. "
-            "Come back tomorrow, or upgrade to Alpha+ in the sidebar for full model access."
+            f"You've used all {tier_info['daily_question_limit']} free questions for today. "
+            "Come back tomorrow, or upgrade in the sidebar for unlimited access."
         )
         st.stop()
 
@@ -235,13 +209,28 @@ if not groq_api_key:
 client = Groq(api_key=groq_api_key)
 
 # -----------------------------------------------------------------------------
-# 9. Main Header
+# 9. System prompt
 # -----------------------------------------------------------------------------
-st.title("🌺 Iris | Exam Prep Tutor")
-st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}**")
+IRIS_SYSTEM_PROMPT = f"""
+You are Iris, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
+Your goal is to prepare students to achieve top scores in their exams.
+
+CURRENT CONTEXT:
+- Stream: {stream}
+- Subject: {subject}
+- Target Exam: {exam_target}
+- Plan: {current_tier}
+
+YOUR TEACHING METHODOLOGY:
+1. Active Recall First: After explaining a concept, ask 1 sharp follow-up question to test understanding.
+2. Structure & Clarity: Use bullet points, bold key vocabulary, clean markdown.
+3. Marking-Scheme Aligned: Emphasize standard definitions, formulas, and keywords examiners award points for.
+4. Analogies & Intuition: Explain concepts with real-world analogies before formulas or syntax.
+5. Tone: Encouraging, structured, patient, but firm on technical accuracy.
+"""
 
 # -----------------------------------------------------------------------------
-# 10. Load persistent chat history from Neon
+# 10. Load persistent chat history from Neon on first load of the session
 # -----------------------------------------------------------------------------
 if "messages" not in st.session_state:
     past = db.load_recent_history(student["id"])
@@ -254,67 +243,48 @@ if "messages" not in st.session_state:
         }]
 
 # -----------------------------------------------------------------------------
-# 11. Render Chat Messages
+# 11. Chat UI
 # -----------------------------------------------------------------------------
+st.title("🌺 Iris | Exam Prep Tutor")
+st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
+
 for msg in st.session_state.messages:
     avatar = "🌺" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
-# -----------------------------------------------------------------------------
-# 12. Borderless Chat Input & Integrated Model Switcher
-# -----------------------------------------------------------------------------
-input_col, model_col = st.columns([84, 16], vertical_alignment="bottom")
+# ---- Inline model badge/picker, sits just above the input like a model selector ----
+active_model = tier_info["model"]
+active_label = current_tier.replace("Iris ", "")
+premium_used_today = db.get_today_usage(student["id"])
 
-with model_col:
-    model_options = {
-        "Alpha 🔽": "Alpha",
-        "Alpha+ 🔽": "Alpha+"
-    }
-    selected_label = st.selectbox(
-        "Engine",
-        options=list(model_options.keys()),
-        index=0 if current_tier == "Alpha" else 1,
-        label_visibility="collapsed"
-    )
-    selected_model_tier = model_options[selected_label]
+if current_tier == "Iris Alpha+":
+    premium_limit = tier_info["premium_daily_limit"]
+    remaining = max(premium_limit - premium_used_today, 0)
+    if remaining > 0:
+        badge_col, picker_col = st.columns([3, 2])
+        with picker_col:
+            use_full = st.selectbox(
+                "Model",
+                [f"Alpha+ · full model ({remaining} left today)", "Alpha · save my requests"],
+                label_visibility="collapsed",
+            )
+        if use_full.startswith("Alpha ·"):
+            active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+            active_label = "Alpha (saving Alpha+ requests)"
+    else:
+        st.caption("🌸 Alpha+ · out of full-model requests today, running on Alpha until tomorrow.")
+        active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+        active_label = "Alpha (Alpha+ daily limit reached)"
+else:
+    st.caption(f"🌸 **{active_label}**")
 
-with input_col:
-    user_input = st.chat_input("Ask a question, request a practice drill, or paste a problem...")
-
-# System prompt resolution
-IRIS_SYSTEM_PROMPT = f"""
-You are Iris, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
-Your goal is to prepare students to achieve top scores in their exams.
-
-CURRENT CONTEXT:
-- Stream: {stream}
-- Subject: {subject}
-- Target Exam: {exam_target}
-- Plan: {current_tier}
-- Engine: {selected_model_tier}
-
-YOUR TEACHING METHODOLOGY:
-1. Active Recall First: After explaining a concept, ask 1 sharp follow-up question to test understanding.
-2. Structure & Clarity: Use bullet points, bold key vocabulary, clean markdown.
-3. Marking-Scheme Aligned: Emphasize standard definitions, formulas, and keywords examiners award points for.
-4. Analogies & Intuition: Explain concepts with real-world analogies before formulas or syntax.
-5. Tone: Encouraging, structured, patient, but firm on technical accuracy.
-"""
-
-if user_input:
-    if selected_model_tier == "Alpha+" and current_tier == free_tier_name:
-        st.warning("The Alpha+ model requires a full model subscription (₦500/mo). Please upgrade in the sidebar to use this model.")
-        st.stop()
-
+if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     db.save_message(student["id"], subject, exam_target, "user", user_input)
-    st.rerun()
+    with st.chat_message("user", avatar="👤"):
+        st.markdown(user_input)
 
-# -----------------------------------------------------------------------------
-# 13. Trigger AI Response if last message is from user
-# -----------------------------------------------------------------------------
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     api_messages = [{"role": "system", "content": IRIS_SYSTEM_PROMPT}] + [
         {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
     ]
@@ -322,15 +292,12 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     with st.chat_message("assistant", avatar="🌺"):
         response_placeholder = st.empty()
         full_response = ""
-        
-        model_id = "llama-3.1-8b-instant" if selected_model_tier == "Alpha" else "llama-3.3-70b-versatile"
-
         try:
             completion = client.chat.completions.create(
-                model=model_id,
+                model=active_model,
                 messages=api_messages,
                 temperature=0.5,
-                max_tokens=2048,
+                max_tokens=tier_info["max_tokens"],
                 stream=True,
             )
             for chunk in completion:
@@ -344,6 +311,9 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
     if full_response:
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
-        if current_tier == free_tier_name:
+        # Track usage: free tier counts toward its daily cap, Alpha+ counts toward its
+        # full-model daily allowance (only when the full model was actually used)
+        if current_tier == config.FREE_TIER_NAME:
             db.increment_usage(student["id"])
-        st.rerun()
+        elif current_tier == "Iris Alpha+" and active_model == config.MODEL_TIERS["Iris Alpha+"]["model"]:
+            db.increment_usage(student["id"])
