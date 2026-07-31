@@ -263,14 +263,21 @@ def save_message(student_id, subject, exam_level, role, content):
     conn.close()
 
 
-def load_recent_history(student_id, limit=30):
+def load_recent_history(student_id, subject=None, limit=30):
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute(
-            """SELECT role, content FROM chat_history
-               WHERE student_id = %s ORDER BY created_at DESC LIMIT %s""",
-            (student_id, limit),
-        )
+        if subject:
+            cur.execute(
+                """SELECT role, content FROM chat_history
+                   WHERE student_id = %s AND subject = %s ORDER BY created_at DESC LIMIT %s""",
+                (student_id, subject, limit),
+            )
+        else:
+            cur.execute(
+                """SELECT role, content FROM chat_history
+                   WHERE student_id = %s ORDER BY created_at DESC LIMIT %s""",
+                (student_id, limit),
+            )
         rows = cur.fetchall()
     conn.close()
     return list(reversed(rows))  # oldest first
