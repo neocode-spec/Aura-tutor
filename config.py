@@ -58,22 +58,18 @@ MODEL_TIERS = {
         "model": "llama-3.1-8b-instant",
         "price_ngn": 0,
         "billing": "free",
-        "description": "Fast, solid for everyday practice and quick questions.",
-        "daily_question_limit": 15,
+        "description": "Free — solid everyday tutor, longer answers allowed.",
+        "daily_question_limit": 30,
+        "max_tokens": 2048,
     },
     "Iris Alpha+": {
         "model": "llama-3.3-70b-versatile",
-        "price_ngn": 1000,
+        "price_ngn": 500,
         "billing": "monthly",
-        "description": "Stronger reasoning — better for WAEC/JAMB-depth explanations.",
-        "daily_question_limit": None,
-    },
-    "Iris Alpha Ultimate": {
-        "model": "openai/gpt-oss-120b",
-        "price_ngn": 2500,
-        "billing": "monthly",
-        "description": "Top-tier reasoning — tough concepts, past-question breakdowns, exam strategy.",
-        "daily_question_limit": None,
+        "description": "Stronger reasoning — 9 full-power requests/day, then falls back to Alpha.",
+        "daily_question_limit": None,       # never blocked
+        "premium_daily_limit": 9,           # full-model requests/day before falling back
+        "max_tokens": 3072,
     },
 }
 
