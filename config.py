@@ -54,16 +54,16 @@ EXAM_LEVELS = [
 # Groq deprecates/renames models periodically.
 # -----------------------------------------------------------------------------
 MODEL_TIERS = {
-    "Iris Alpha": {
-        "model": "llama-3.1-8b-instant",
+    "Aura Alpha": {
+        "model": "openai/gpt-oss-20b",
         "price_ngn": 0,
         "billing": "free",
         "description": "Free — solid everyday tutor, longer answers allowed.",
         "daily_question_limit": 30,
         "max_tokens": 2048,
     },
-    "Iris Alpha+": {
-        "model": "llama-3.3-70b-versatile",
+    "Aura Alpha+": {
+        "model": "openai/gpt-oss-120b",
         "price_ngn": 500,
         "billing": "monthly",
         "description": "Stronger reasoning — 9 full-power requests/day, then falls back to Alpha.",
@@ -73,4 +73,4 @@ MODEL_TIERS = {
     },
 }
 
-FREE_TIER_NAME = "Iris Alpha"
+FREE_TIER_NAME = "Aura Alpha"
