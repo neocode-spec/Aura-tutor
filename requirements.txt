@@ -1,4 +1,3 @@
-python-dotenv>=1.0.0
 streamlit
 groq
 psycopg2-binary
