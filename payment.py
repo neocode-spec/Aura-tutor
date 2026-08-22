@@ -14,7 +14,17 @@ import uuid
 import requests
 import streamlit as st
 
-FLW_SECRET_KEY = os.getenv("FLW_SECRET_KEY") or st.secrets.get("FLW_SECRET_KEY", "")
+def _get_secret(key: str, default: str = "") -> str:
+    value = os.getenv(key)
+    if value:
+        return value
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+FLW_SECRET_KEY = _get_secret("FLW_SECRET_KEY")
 FLW_BASE_URL = "https://api.flutterwave.com/v3"
 
 
@@ -35,7 +45,7 @@ def initiate_payment(student_email: str, student_name: str, tier: str, amount_ng
             "name": student_name,
         },
         "customizations": {
-            "title": "Iris Tutor",
+            "title": "Aura Tutor",
             "description": f"Upgrade to {tier}",
         },
     }
