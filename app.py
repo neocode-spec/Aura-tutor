@@ -12,14 +12,14 @@ import payment
 # 1. Page Configuration
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Iris — AI Exam Prep Tutor",
-    page_icon="🌺",
+    page_title="Aura — AI Exam Prep Tutor",
+    page_icon="🔥",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # -----------------------------------------------------------------------------
-# 2. Custom CSS (kept from your original)
+# 2. Custom CSS — blue/purple gradient brand
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -29,12 +29,12 @@ st.markdown("""
         background-color: #1a1a24; color: #ffffff; border: 1px solid #33334d; border-radius: 8px;
     }
     .stButton > button {
-        background: linear-gradient(135deg, #b81d24 0%, #800020 100%);
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
         color: white; border: none; border-radius: 8px; font-weight: 600; transition: all 0.3s ease;
     }
     .stButton > button:hover {
-        background: linear-gradient(135deg, #d62828 0%, #9e002b 100%);
-        box-shadow: 0 4px 12px rgba(184, 29, 36, 0.4);
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
     }
     [data-testid="stChatMessage"] {
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
@@ -103,7 +103,7 @@ SECURITY_QUESTIONS = [
 ]
 
 if "student" not in st.session_state:
-    st.title("🌺 Iris Tutor Studio")
+    st.title("🔥 Aura Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
 
     check_email = st.text_input("Your email", key="check_email").strip().lower()
@@ -152,7 +152,7 @@ tier_info = config.MODEL_TIERS[current_tier]
 # 6. Sidebar — subject, exam level, stream-filtered subjects, tier
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("## 🌺 **Iris Tutor Studio**")
+    st.markdown("## 🔥 **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
     st.divider()
 
@@ -184,7 +184,7 @@ with st.sidebar:
 if current_tier == config.FREE_TIER_NAME:
     used_today = db.get_today_usage(student["id"])
     if used_today >= tier_info["daily_question_limit"]:
-        st.title("🌺 Iris | Exam Prep Tutor")
+        st.title("🔥 Aura | Exam Prep Tutor")
         st.warning(
             f"You've used all {tier_info['daily_question_limit']} free questions for today. "
             "Come back tomorrow, or upgrade in the sidebar for unlimited access."
@@ -203,8 +203,8 @@ client = Groq(api_key=groq_api_key)
 # -----------------------------------------------------------------------------
 # 9. System prompt
 # -----------------------------------------------------------------------------
-IRIS_SYSTEM_PROMPT = f"""
-You are Iris, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
+AURA_SYSTEM_PROMPT = f"""
+You are Aura, a world-class, dedicated AI Exam Prep Tutor for Nigerian students.
 Your goal is to prepare students to achieve top scores in their exams.
 
 CURRENT CONTEXT:
@@ -232,47 +232,47 @@ if st.session_state.get("last_subject") != subject:
     else:
         st.session_state.messages = [{
             "role": "assistant",
-            "content": f"Hello! I'm **Iris** 🌺. Ready to master **{subject}** for your {exam_target}?\n\nWhat specific topic or question are we tackling today?"
+            "content": f"Hello! I'm **Aura** 🔥. Ready to master **{subject}** for your {exam_target}?\n\nWhat specific topic or question are we tackling today?"
         }]
 
 # -----------------------------------------------------------------------------
 # 11. Chat UI
 # -----------------------------------------------------------------------------
-st.title("🌺 Iris | Exam Prep Tutor")
+st.title("🔥 Aura | Exam Prep Tutor")
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
 for msg in st.session_state.messages:
-    avatar = "🌺" if msg["role"] == "assistant" else "👤"
+    avatar = "🔥" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
 # ---- Inline model badge/picker, sits just above the input like a model selector ----
 active_model = tier_info["model"]
-active_label = current_tier.replace("Iris ", "")
+active_label = current_tier.replace("Aura ", "")
 premium_used_today = db.get_today_usage(student["id"])
-has_alpha_plus = current_tier == "Iris Alpha+"
+has_alpha_plus = current_tier == "Aura Alpha+"
 remaining = 0
 
 if has_alpha_plus:
     premium_limit = tier_info["premium_daily_limit"]
     remaining = max(premium_limit - premium_used_today, 0)
 
-alpha_plus_label = f"🌸 Alpha+ · full model ({remaining} left today)" if has_alpha_plus and remaining > 0 else "🌸 Alpha+ · unlock full model"
+alpha_plus_label = f"🔥 Alpha+ · full model ({remaining} left today)" if has_alpha_plus and remaining > 0 else "🔥 Alpha+ · unlock full model"
 
 picker_col, _ = st.columns([2, 3])
 with picker_col:
     choice = st.selectbox(
-        "Model", ["🌸 Alpha · fast & free", alpha_plus_label],
+        "Model", ["🔥 Alpha · fast & free", alpha_plus_label],
         label_visibility="collapsed",
     )
 
-if choice.startswith("🌸 Alpha+"):
+if choice.startswith("🔥 Alpha+"):
     if has_alpha_plus and remaining > 0:
-        active_model = config.MODEL_TIERS["Iris Alpha+"]["model"]
+        active_model = config.MODEL_TIERS["Aura Alpha+"]["model"]
         active_label = "Alpha+"
     elif has_alpha_plus and remaining == 0:
         st.caption("Out of full-model requests today — running on Alpha until tomorrow.")
-        active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+        active_model = config.MODEL_TIERS["Aura Alpha"]["model"]
         active_label = "Alpha (Alpha+ daily limit reached)"
     else:
         # Not subscribed yet — send them straight to payment
@@ -280,28 +280,28 @@ if choice.startswith("🌸 Alpha+"):
         if st.button("Unlock Alpha+ — ₦500", use_container_width=True):
             try:
                 redirect_url = os.getenv("APP_BASE_URL", "https://iris-tutor.onrender.com")
-                tinfo = config.MODEL_TIERS["Iris Alpha+"]
+                tinfo = config.MODEL_TIERS["Aura Alpha+"]
                 tx_ref, link = payment.initiate_payment(
                     student_email=student["email"],
                     student_name=student["name"],
-                    tier="Iris Alpha+",
+                    tier="Aura Alpha+",
                     amount_ngn=tinfo["price_ngn"],
                     redirect_url=redirect_url,
                 )
-                db.create_payment_record(student["id"], tx_ref, "Iris Alpha+", tinfo["price_ngn"])
+                db.create_payment_record(student["id"], tx_ref, "Aura Alpha+", tinfo["price_ngn"])
                 st.link_button("Click to complete payment →", link, use_container_width=True)
             except Exception as e:
                 st.error(f"Could not start payment: {e}")
-        active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+        active_model = config.MODEL_TIERS["Aura Alpha"]["model"]
         active_label = "Alpha"
 else:
-    active_model = config.MODEL_TIERS["Iris Alpha"]["model"]
+    active_model = config.MODEL_TIERS["Aura Alpha"]["model"]
     active_label = "Alpha"
 
 active_max_tokens = (
-    config.MODEL_TIERS["Iris Alpha+"]["max_tokens"]
-    if active_model == config.MODEL_TIERS["Iris Alpha+"]["model"]
-    else config.MODEL_TIERS["Iris Alpha"]["max_tokens"]
+    config.MODEL_TIERS["Aura Alpha+"]["max_tokens"]
+    if active_model == config.MODEL_TIERS["Aura Alpha+"]["model"]
+    else config.MODEL_TIERS["Aura Alpha"]["max_tokens"]
 )
 
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
@@ -310,11 +310,11 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_input)
 
-    api_messages = [{"role": "system", "content": IRIS_SYSTEM_PROMPT}] + [
+    api_messages = [{"role": "system", "content": AURA_SYSTEM_PROMPT}] + [
         {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
     ]
 
-    with st.chat_message("assistant", avatar="🌺"):
+    with st.chat_message("assistant", avatar="🔥"):
         response_placeholder = st.empty()
         full_response = ""
         try:
@@ -340,5 +340,5 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
         # full-model daily allowance (only when the full model was actually used)
         if current_tier == config.FREE_TIER_NAME:
             db.increment_usage(student["id"])
-        elif current_tier == "Iris Alpha+" and active_model == config.MODEL_TIERS["Iris Alpha+"]["model"]:
+        elif current_tier == "Aura Alpha+" and active_model == config.MODEL_TIERS["Aura Alpha+"]["model"]:
             db.increment_usage(student["id"])
