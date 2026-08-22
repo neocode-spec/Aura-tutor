@@ -279,3 +279,62 @@ def get_payment(tx_ref):
         row = cur.fetchone()
     conn.close()
     return row
+
+
+# --------------------------------------------------------------- admin stats --
+def get_admin_stats():
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM students")
+        total_students = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM students WHERE created_at::date = CURRENT_DATE")
+        signups_today = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM students WHERE tier = 'Aura Alpha+'")
+        alpha_plus_subscribers = cur.fetchone()["n"]
+
+        cur.execute("SELECT COALESCE(SUM(amount_ngn), 0) AS total FROM payments WHERE status = 'successful'")
+        total_revenue = cur.fetchone()["total"]
+
+        cur.execute("SELECT COALESCE(SUM(question_count), 0) AS n FROM usage_log WHERE usage_date = CURRENT_DATE")
+        questions_today = cur.fetchone()["n"]
+
+        cur.execute(
+            """SELECT COUNT(DISTINCT student_id) AS n FROM chat_history
+               WHERE created_at::date = CURRENT_DATE"""
+        )
+        active_today = cur.fetchone()["n"]
+
+        cur.execute(
+            """SELECT name, email, stream, tier, created_at FROM students
+               ORDER BY created_at DESC LIMIT 10"""
+        )
+        recent_signups = cur.fetchall()
+
+        cur.execute(
+            """SELECT subject, COUNT(*) AS n FROM chat_history
+               WHERE subject IS NOT NULL AND role = 'user'
+               GROUP BY subject ORDER BY n DESC LIMIT 10"""
+        )
+        top_subjects = cur.fetchall()
+
+        cur.execute(
+            """SELECT exam_level, COUNT(*) AS n FROM chat_history
+               WHERE exam_level IS NOT NULL AND role = 'user'
+               GROUP BY exam_level ORDER BY n DESC LIMIT 10"""
+        )
+        top_exam_levels = cur.fetchall()
+
+    conn.close()
+    return {
+        "total_students": total_students,
+        "signups_today": signups_today,
+        "alpha_plus_subscribers": alpha_plus_subscribers,
+        "total_revenue": total_revenue,
+        "questions_today": questions_today,
+        "active_today": active_today,
+        "recent_signups": recent_signups,
+        "top_subjects": top_subjects,
+        "top_exam_levels": top_exam_levels,
+    }
