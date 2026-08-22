@@ -8,10 +8,12 @@ Set NEON_DATABASE_URL in your environment or Render settings:
 import os
 import hashlib
 import secrets as pysecrets
+from datetime import date
+
 import streamlit as st
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import date
+
 
 def _get_secret(key: str, default: str = "") -> str:
     """Read from env var first, then Streamlit secrets if available (won't crash if no secrets.toml exists)."""
@@ -39,13 +41,11 @@ def init_schema():
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL,
-        password_hash TEXT,
-        password_salt TEXT,
         security_question TEXT,
         security_answer_hash TEXT,
         security_answer_salt TEXT,
         stream TEXT,
-        tier TEXT DEFAULT 'Iris Alpha',
+        tier TEXT DEFAULT 'Aura Alpha',
         tier_active_until DATE,
         created_at TIMESTAMP DEFAULT NOW()
     );
@@ -82,31 +82,35 @@ def init_schema():
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(schema_sql)
-        # Upgrade older tables that existed before password columns were added
-        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash TEXT")
-        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS password_salt TEXT")
+        # Safe upgrades for tables that existed before these columns were added.
+        # Every ALTER here is IF NOT EXISTS, so this never breaks on a fresh DB
+        # and never breaks on a DB that already has these columns.
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_question TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_salt TEXT")
+        # Rebrand migration: any student created back when tiers were named "Iris Alpha"
+        # gets moved to the new "Aura Alpha" naming, so nothing breaks after the rename.
+        cur.execute("UPDATE students SET tier = 'Aura Alpha' WHERE tier = 'Iris Alpha'")
+        cur.execute("UPDATE students SET tier = 'Aura Alpha+' WHERE tier = 'Iris Alpha+'")
     conn.commit()
     conn.close()
 
 
-# ---------------------------------------------------------------- passwords --
-def _hash_password(password: str, salt: str = None):
+# ---------------------------------------------------------------- security answer hashing --
+def _hash_answer(answer: str, salt: str = None):
     """PBKDF2-HMAC-SHA256, 200k iterations. Returns (hash_hex, salt_hex)."""
     if salt is None:
         salt = pysecrets.token_hex(16)
     hashed = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000
+        "sha256", answer.encode("utf-8"), bytes.fromhex(salt), 200_000
     ).hex()
     return hashed, salt
 
 
-def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
+def _verify_answer(answer: str, stored_hash: str, stored_salt: str) -> bool:
     if not stored_hash or not stored_salt:
         return False
-    check_hash, _ = _hash_password(password, stored_salt)
+    check_hash, _ = _hash_answer(answer, stored_salt)
     return pysecrets.compare_digest(check_hash, stored_hash)
 
 
@@ -124,7 +128,7 @@ def create_student(name: str, email: str, stream: str, security_question: str, s
     """Creates a new account. No password — the security Q&A IS the login credential."""
     if find_student_by_email(email):
         raise ValueError("An account with this email already exists.")
-    ans_hashed, ans_salt = _hash_password(security_answer.strip().lower())
+    ans_hashed, ans_salt = _hash_answer(security_answer.strip().lower())
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
@@ -132,56 +136,6 @@ def create_student(name: str, email: str, stream: str, security_question: str, s
                (name, email, security_question, security_answer_hash, security_answer_salt, stream)
                VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
             (name, email, security_question, ans_hashed, ans_salt, stream),
-        )
-        row = cur.fetchone()
-    conn.commit()
-    conn.close()
-    return row
-
-
-def authenticate_with_security(email: str, security_answer: str):
-    """Returns the student row if the security answer is correct, else None."""
-    row = find_student_by_email(email)
-    if row and row.get("security_answer_hash") and _verify_password(
-        security_answer.strip().lower(), row["security_answer_hash"], row["security_answer_salt"]
-    ):
-        return row
-    return None
-
-
-def find_or_create_student(name: str, email: str, stream: str = "Science"):
-    """
-    Simple login — just name and email, no password. If the email exists,
-    logs them back into their existing profile (memory intact). If not,
-    creates a new one on the spot.
-    """
-    row = find_student_by_email(email)
-    if row:
-        return row
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO students (name, email, stream) VALUES (%s, %s, %s) RETURNING *""",
-            (name, email, stream),
-        )
-        row = cur.fetchone()
-    conn.commit()
-    conn.close()
-    return row
-
-
-def find_or_create_google_student(name: str, email: str, default_stream: str = "Science"):
-    """
-    For students who signed in with Google — no password needed, Google already verified them.
-    """
-    row = find_student_by_email(email)
-    if row:
-        return row
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO students (name, email, stream) VALUES (%s, %s, %s) RETURNING *""",
-            (name, email, default_stream),
         )
         row = cur.fetchone()
     conn.commit()
@@ -197,29 +151,12 @@ def get_security_question(email: str):
     return None
 
 
-def reset_password_with_security_answer(email: str, security_answer: str, new_password: str) -> bool:
-    """Verifies the security answer and, if correct, sets a new password. Returns True on success."""
+def authenticate_with_security(email: str, security_answer: str):
+    """Returns the student row if the security answer is correct, else None."""
     row = find_student_by_email(email)
-    if not row or not row.get("security_answer_hash"):
-        return False
-    if not _verify_password(security_answer.strip().lower(), row["security_answer_hash"], row["security_answer_salt"]):
-        return False
-    new_hash, new_salt = _hash_password(new_password)
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE students SET password_hash = %s, password_salt = %s WHERE id = %s",
-            (new_hash, new_salt, row["id"]),
-        )
-    conn.commit()
-    conn.close()
-    return True
-
-
-def authenticate_student(email: str, password: str):
-    """Returns the student row if the password is correct, else None."""
-    row = find_student_by_email(email)
-    if row and _verify_password(password, row["password_hash"], row["password_salt"]):
+    if row and row.get("security_answer_hash") and _verify_answer(
+        security_answer.strip().lower(), row["security_answer_hash"], row["security_answer_salt"]
+    ):
         return row
     return None
 
@@ -233,9 +170,9 @@ def get_student_tier(student_id) -> str:
         row = cur.fetchone()
     conn.close()
     if not row:
-        return "Iris Alpha"
-    if row["tier"] != "Iris Alpha" and row["tier_active_until"] and row["tier_active_until"] < date.today():
-        return "Iris Alpha"  # subscription lapsed, fall back to free
+        return "Aura Alpha"
+    if row["tier"] != "Aura Alpha" and row["tier_active_until"] and row["tier_active_until"] < date.today():
+        return "Aura Alpha"  # subscription lapsed, fall back to free
     return row["tier"]
 
 
