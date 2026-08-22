@@ -64,6 +64,55 @@ except Exception as e:
     st.stop()
 
 # -----------------------------------------------------------------------------
+# 3b. Admin dashboard — visit yourURL?admin=1, password-gated
+# -----------------------------------------------------------------------------
+if st.query_params.get("admin") == "1":
+    st.title("🔥 Aura — Admin Dashboard")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    entered = st.text_input("Admin password", type="password")
+    if not admin_password:
+        st.error("ADMIN_PASSWORD is not set in your Render environment yet — set it to use this page.")
+        st.stop()
+    if entered != admin_password:
+        if entered:
+            st.error("Wrong password.")
+        st.stop()
+
+    stats = db.get_admin_stats()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total students", stats["total_students"])
+    c2.metric("Signups today", stats["signups_today"])
+    c3.metric("Active today", stats["active_today"])
+    c4, c5, c6 = st.columns(3)
+    c4.metric("Alpha+ subscribers", stats["alpha_plus_subscribers"])
+    c5.metric("Revenue (₦, all-time)", f"₦{stats['total_revenue']:,}")
+    c6.metric("Questions asked today", stats["questions_today"])
+
+    st.divider()
+    st.subheader("Most recent signups")
+    for s in stats["recent_signups"]:
+        st.caption(f"**{s['name']}** ({s['email']}) — {s['stream']} — {s['tier']} — {s['created_at']:%Y-%m-%d %H:%M}")
+
+    st.divider()
+    col_subj, col_exam = st.columns(2)
+    with col_subj:
+        st.subheader("Most-asked subjects")
+        if stats["top_subjects"]:
+            for row in stats["top_subjects"]:
+                st.caption(f"**{row['subject']}** — {row['n']} questions")
+        else:
+            st.caption("No questions logged yet.")
+    with col_exam:
+        st.subheader("Most common exam targets")
+        if stats["top_exam_levels"]:
+            for row in stats["top_exam_levels"]:
+                st.caption(f"**{row['exam_level']}** — {row['n']} questions")
+        else:
+            st.caption("No questions logged yet.")
+
+    st.stop()
+
+# -----------------------------------------------------------------------------
 # 4. Handle Flutterwave redirect BEFORE anything else renders
 # -----------------------------------------------------------------------------
 query_params = st.query_params
@@ -241,10 +290,28 @@ if st.session_state.get("last_subject") != subject:
 st.title("🔥 Aura | Exam Prep Tutor")
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
-for msg in st.session_state.messages:
+if "editing_index" not in st.session_state:
+    st.session_state.editing_index = None
+
+for i, msg in enumerate(st.session_state.messages):
     avatar = "🔥" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
+        if msg["role"] == "user":
+            btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+            with btn_col1:
+                if st.button("✏️ Edit", key=f"edit_{i}"):
+                    st.session_state.editing_index = i
+                    st.rerun()
+            with btn_col2:
+                # Copy runs entirely client-side (no rerun) via clipboard JS
+                safe_text = msg["content"].replace("`", "\\`").replace("</script>", "")
+                st.markdown(
+                    f"""<button onclick="navigator.clipboard.writeText(`{safe_text}`)"
+                        style="background:transparent;border:none;color:#8b5cf6;cursor:pointer;font-size:0.85em;">
+                        📋 Copy</button>""",
+                    unsafe_allow_html=True,
+                )
 
 # ---- Inline model badge/picker, sits just above the input like a model selector ----
 active_model = tier_info["model"]
@@ -304,19 +371,20 @@ active_max_tokens = (
     else config.MODEL_TIERS["Aura Alpha"]["max_tokens"]
 )
 
-if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    db.save_message(student["id"], subject, exam_target, "user", user_input)
+def send_and_respond(text: str):
+    """Sends a user message, streams Aura's reply, saves both, tracks usage."""
+    st.session_state.messages.append({"role": "user", "content": text})
+    db.save_message(student["id"], subject, exam_target, "user", text)
     with st.chat_message("user", avatar="👤"):
-        st.markdown(user_input)
+        st.markdown(text)
 
     api_messages = [{"role": "system", "content": AURA_SYSTEM_PROMPT}] + [
         {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
     ]
 
+    full_response = ""
     with st.chat_message("assistant", avatar="🔥"):
         response_placeholder = st.empty()
-        full_response = ""
         try:
             completion = client.chat.completions.create(
                 model=active_model,
@@ -336,9 +404,28 @@ if user_input := st.chat_input("Ask a question, request a practice drill, or pas
     if full_response:
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
-        # Track usage: free tier counts toward its daily cap, Alpha+ counts toward its
-        # full-model daily allowance (only when the full model was actually used)
         if current_tier == config.FREE_TIER_NAME:
             db.increment_usage(student["id"])
         elif current_tier == "Aura Alpha+" and active_model == config.MODEL_TIERS["Aura Alpha+"]["model"]:
             db.increment_usage(student["id"])
+
+
+# ---- Handle an in-progress edit (resubmit truncates history from that point) ----
+if st.session_state.get("editing_index") is not None:
+    idx = st.session_state.editing_index
+    with st.form("edit_form"):
+        edited_text = st.text_area("Edit your message", value=st.session_state.messages[idx]["content"])
+        col_a, col_b = st.columns(2)
+        resubmit = col_a.form_submit_button("Resubmit", use_container_width=True)
+        cancel = col_b.form_submit_button("Cancel", use_container_width=True)
+    if resubmit:
+        st.session_state.messages = st.session_state.messages[:idx]
+        st.session_state.editing_index = None
+        send_and_respond(edited_text)
+        st.rerun()
+    if cancel:
+        st.session_state.editing_index = None
+        st.rerun()
+
+if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
+    send_and_respond(user_input)
