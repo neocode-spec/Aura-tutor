@@ -4,13 +4,12 @@ from datetime import date, timedelta
 
 import streamlit as st
 from groq import Groq
-from PIL import Image
 
 import config
 import db
 import payment
 
-    _page_icon = "🔥" 
+_page_icon = "🔥"
 
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
@@ -207,7 +206,7 @@ tier_info = config.MODEL_TIERS[current_tier]
 with st.sidebar:
     logo_col, title_col = st.columns([1, 4])
     with logo_col:
-        st.image(FLAME_ICON_PATH, width=40)
+        st.markdown("<h2 style='margin:0; padding:0;'>🔥</h2>", unsafe_allow_html=True)
     with title_col:
         st.markdown("## **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
@@ -322,7 +321,7 @@ if "editing_index" not in st.session_state:
     st.session_state.editing_index = None
 
 for i, msg in enumerate(st.session_state.messages):
-    avatar = FLAME_ICON_PATH if msg["role"] == "assistant" else "👤"
+    avatar = "🔥" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
         st.markdown(display_content)
@@ -412,7 +411,7 @@ def send_and_respond(text: str):
     ]
 
     full_response = ""
-    with st.chat_message("assistant", avatar=FLAME_ICON_PATH):
+    with st.chat_message("assistant", avatar="🔥"):
         response_placeholder = st.empty()
         try:
             completion = client.chat.completions.create(
