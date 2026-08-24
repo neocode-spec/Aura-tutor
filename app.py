@@ -10,11 +10,7 @@ import config
 import db
 import payment
 
-FLAME_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "flame_icon.png")
-try:
-    _page_icon = Image.open(FLAME_ICON_PATH)
-except Exception:
-    _page_icon = "🔥"  # fallback if the asset didn't make it into the deploy
+    _page_icon = "🔥" 
 
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
