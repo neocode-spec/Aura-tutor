@@ -1,19 +1,27 @@
 import os
+import re
 from datetime import date, timedelta
 
 import streamlit as st
 from groq import Groq
+from PIL import Image
 
 import config
 import db
 import payment
+
+FLAME_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "flame_icon.png")
+try:
+    _page_icon = Image.open(FLAME_ICON_PATH)
+except Exception:
+    _page_icon = "🔥"  # fallback if the asset didn't make it into the deploy
 
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Aura — AI Exam Prep Tutor",
-    page_icon="🔥",
+    page_icon=_page_icon,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -201,7 +209,11 @@ tier_info = config.MODEL_TIERS[current_tier]
 # 6. Sidebar — subject, exam level, stream-filtered subjects, tier
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("## 🔥 **Aura Tutor Studio**")
+    logo_col, title_col = st.columns([1, 4])
+    with logo_col:
+        st.image(FLAME_ICON_PATH, width=40)
+    with title_col:
+        st.markdown("## **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
     st.divider()
 
@@ -268,7 +280,27 @@ YOUR TEACHING METHODOLOGY:
 3. Marking-Scheme Aligned: Emphasize standard definitions, formulas, and keywords examiners award points for.
 4. Analogies & Intuition: Explain concepts with real-world analogies before formulas or syntax.
 5. Tone: Encouraging, structured, patient, but firm on technical accuracy.
+
+MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
+- Every formula or equation MUST be wrapped in LaTeX dollar-sign delimiters, nothing else.
+- Inline formula (within a sentence): wrap it in single dollar signs, e.g. $F = ma$
+- Standalone/block formula (on its own line): wrap it in double dollar signs, e.g. $$KE = \\tfrac{{1}}{{2}}mv^2$$
+- NEVER wrap formulas in plain parentheses like (\\displaystyle ...) — that does not render and shows up as broken text.
+- NEVER use \\[ \\] or \\( \\) delimiters — only $ and $$.
+- In tables, formulas still need $ delimiters around them, e.g. a table cell should contain $s = ut + \\tfrac{{1}}{{2}}at^2$, not the raw LaTeX with no dollar signs.
 """
+
+
+def fix_math_formatting(text: str) -> str:
+    """
+    Safety net — models sometimes ignore the $ instruction and output
+    \\( \\), \\[ \\], or (\\displaystyle ...) anyway. Convert those to
+    proper $ / $$ delimiters so Streamlit actually renders the math.
+    """
+    text = re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", text, flags=re.DOTALL)
+    text = re.sub(r"\\\((.+?)\\\)", r"$\1$", text, flags=re.DOTALL)
+    text = re.sub(r"\(\\displaystyle\s+(.+?)\)", r"$\1$", text)
+    return text
 
 # -----------------------------------------------------------------------------
 # 10. Load persistent chat history — resets whenever the student switches subject
@@ -294,9 +326,10 @@ if "editing_index" not in st.session_state:
     st.session_state.editing_index = None
 
 for i, msg in enumerate(st.session_state.messages):
-    avatar = "🔥" if msg["role"] == "assistant" else "👤"
+    avatar = FLAME_ICON_PATH if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
-        st.markdown(msg["content"])
+        display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
+        st.markdown(display_content)
         if msg["role"] == "user":
             btn_col1, btn_col2, _ = st.columns([1, 1, 6])
             with btn_col1:
@@ -383,7 +416,7 @@ def send_and_respond(text: str):
     ]
 
     full_response = ""
-    with st.chat_message("assistant", avatar="🔥"):
+    with st.chat_message("assistant", avatar=FLAME_ICON_PATH):
         response_placeholder = st.empty()
         try:
             completion = client.chat.completions.create(
@@ -396,7 +429,8 @@ def send_and_respond(text: str):
             for chunk in completion:
                 content = chunk.choices[0].delta.content or ""
                 full_response += content
-                response_placeholder.markdown(full_response + "▌")
+                response_placeholder.markdown(fix_math_formatting(full_response) + "▌")
+            full_response = fix_math_formatting(full_response)
             response_placeholder.markdown(full_response)
         except Exception as e:
             st.error(f"Error calling Groq API: {str(e)}")
