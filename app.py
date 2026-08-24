@@ -293,13 +293,44 @@ MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
 
 def fix_math_formatting(text: str) -> str:
     """
-    Safety net — models sometimes ignore the $ instruction and output
-    \\( \\), \\[ \\], or (\\displaystyle ...) anyway. Convert those to
-    proper $ / $$ delimiters so Streamlit actually renders the math.
+    Safety net for formula formatting.
+
+    Aura is instructed to use $...$ and $$...$$, but models can sometimes
+    return LaTeX using \(...\), \[...\], or (\displaystyle ...).
+    Normalize those forms before Streamlit renders the response.
     """
-    text = re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", text, flags=re.DOTALL)
-    text = re.sub(r"\\\((.+?)\\\)", r"$\1$", text, flags=re.DOTALL)
-    text = re.sub(r"\(\\displaystyle\s+(.+?)\)", r"$\1$", text)
+    # Display-math delimiters: \[ ... \] -> $$ ... $$
+    text = re.sub(
+        r"\\\[(.*?)\\\]",
+        lambda m: "$$" + m.group(1).strip() + "$$",
+        text,
+        flags=re.DOTALL,
+    )
+
+    # Inline-math delimiters: \( ... \) -> $ ... $
+    text = re.sub(
+        r"\\\((.*?)\\\)",
+        lambda m: "$" + m.group(1).strip() + "$",
+        text,
+        flags=re.DOTALL,
+    )
+
+    # Common model output: (\displaystyle ... ) -> $ ... $
+    text = re.sub(
+        r"\(\\displaystyle\s+(.*?)\)",
+        lambda m: "$" + m.group(1).strip() + "$",
+        text,
+        flags=re.DOTALL,
+    )
+
+    # Same malformed form, allowing whitespace after the opening parenthesis.
+    text = re.sub(
+        r"(?<!\$)\(\s*\\displaystyle\s+(.*?)\s*\)(?!\$)",
+        lambda m: "$" + m.group(1).strip() + "$",
+        text,
+        flags=re.DOTALL,
+    )
+
     return text
 
 # -----------------------------------------------------------------------------
