@@ -1,4 +1,4 @@
- 🌺 Iris — AI Exam Prep Tutor
+ Aura AI Exam Prep Tutor
 
 Iris is a dedicated, active-recall AI tutor built to help students master complex concepts, practice with targeted exam questions, and score high on assessments.
 
