@@ -44,6 +44,7 @@ def init_schema():
         security_question TEXT,
         security_answer_hash TEXT,
         security_answer_salt TEXT,
+        session_token TEXT UNIQUE,
         stream TEXT,
         tier TEXT DEFAULT 'Aura Alpha',
         tier_active_until DATE,
@@ -88,6 +89,7 @@ def init_schema():
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_question TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_salt TEXT")
+        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT UNIQUE")
         # Rebrand migration: any student created back when tiers were named "Iris Alpha"
         # gets moved to the new "Aura Alpha" naming, so nothing breaks after the rename.
         cur.execute("UPDATE students SET tier = 'Aura Alpha' WHERE tier = 'Iris Alpha'")
@@ -112,6 +114,31 @@ def _verify_answer(answer: str, stored_hash: str, stored_salt: str) -> bool:
         return False
     check_hash, _ = _hash_answer(answer, stored_salt)
     return pysecrets.compare_digest(check_hash, stored_hash)
+
+
+def get_or_create_session_token(student_id):
+    """Returns this student's persistent login token, generating one if they don't have one yet."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT session_token FROM students WHERE id = %s", (student_id,))
+        row = cur.fetchone()
+        if row and row["session_token"]:
+            conn.close()
+            return row["session_token"]
+        token = pysecrets.token_urlsafe(24)
+        cur.execute("UPDATE students SET session_token = %s WHERE id = %s", (token, student_id))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def find_student_by_token(token: str):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM students WHERE session_token = %s", (token,))
+        row = cur.fetchone()
+    conn.close()
+    return row
 
 
 # ---------------------------------------------------------------- students --
