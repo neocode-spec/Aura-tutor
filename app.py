@@ -4,12 +4,30 @@ from datetime import date, timedelta
 
 import streamlit as st
 from groq import Groq
+from PIL import Image
 
 import config
 import db
 import payment
 
-_page_icon = "🔥"
+FLAME_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "flame_icon.png")
+try:
+    _page_icon = Image.open(FLAME_ICON_PATH)
+except Exception:
+    _page_icon = "🔥"  # fallback if the asset didn't make it into the deploy
+
+import base64
+try:
+    with open(FLAME_ICON_PATH, "rb") as f:
+        _FLAME_B64 = base64.b64encode(f.read()).decode()
+    FLAME_IMG_TAG = f'<img src="data:image/png;base64,{_FLAME_B64}" width="{{size}}" style="vertical-align:middle;margin-right:8px;">'
+except Exception:
+    FLAME_IMG_TAG = "🔥"  # fallback — plain emoji if the asset is missing
+
+def flame_title(text: str, size: int = 36):
+    """Renders a title with the real gradient flame image instead of the plain emoji."""
+    icon_html = FLAME_IMG_TAG.format(size=size) if "{size}" in FLAME_IMG_TAG else FLAME_IMG_TAG
+    st.markdown(f'<h1 style="display:flex;align-items:center;">{icon_html}{text}</h1>', unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
@@ -155,7 +173,15 @@ SECURITY_QUESTIONS = [
 ]
 
 if "student" not in st.session_state:
-    st.title("🔥 Aura Tutor Studio")
+    # ---- Refresh persistence: if a valid session token is in the URL, restore it automatically ----
+    session_token = st.query_params.get("session")
+    if session_token:
+        restored = db.find_student_by_token(session_token)
+        if restored:
+            st.session_state.student = restored
+            st.rerun()
+
+    flame_title("Aura Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
 
     check_email = st.text_input("Your email", key="check_email").strip().lower()
@@ -173,6 +199,7 @@ if "student" not in st.session_state:
                     row = db.authenticate_with_security(check_email, answer)
                     if row:
                         st.session_state.student = row
+                        st.query_params["session"] = db.get_or_create_session_token(row["id"])
                         st.rerun()
                     else:
                         st.error("That answer doesn't match. Try again.")
@@ -189,9 +216,11 @@ if "student" not in st.session_state:
                     if not (name and security_answer):
                         st.error("Please enter your name and an answer.")
                     else:
-                        st.session_state.student = db.create_student(
+                        new_student = db.create_student(
                             name.strip(), check_email, stream, security_question, security_answer.strip()
                         )
+                        st.session_state.student = new_student
+                        st.query_params["session"] = db.get_or_create_session_token(new_student["id"])
                         st.rerun()
 
     st.stop()
@@ -206,7 +235,7 @@ tier_info = config.MODEL_TIERS[current_tier]
 with st.sidebar:
     logo_col, title_col = st.columns([1, 4])
     with logo_col:
-        st.markdown("<h2 style='margin:0; padding:0;'>🔥</h2>", unsafe_allow_html=True)
+        st.image(FLAME_ICON_PATH, width=40)
     with title_col:
         st.markdown("## **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
@@ -240,7 +269,7 @@ with st.sidebar:
 if current_tier == config.FREE_TIER_NAME:
     used_today = db.get_today_usage(student["id"])
     if used_today >= tier_info["daily_question_limit"]:
-        st.title("🔥 Aura | Exam Prep Tutor")
+        flame_title("Aura | Exam Prep Tutor", size=32)
         st.warning(
             f"You've used all {tier_info['daily_question_limit']} free questions for today. "
             "Come back tomorrow, or upgrade in the sidebar for unlimited access."
@@ -289,12 +318,27 @@ MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
 def fix_math_formatting(text: str) -> str:
     """
     Safety net — models sometimes ignore the $ instruction and output
-    \\( \\), \\[ \\], or (\\displaystyle ...) anyway. Convert those to
-    proper $ / $$ delimiters so Streamlit actually renders the math.
+    \\( \\), \\[ \\], (\\displaystyle ...), or plain (...) containing raw
+    LaTeX commands. Convert all of those to proper $ / $$ delimiters so
+    Streamlit actually renders the math instead of showing broken text.
     """
+    # \[ ... \]  ->  $$ ... $$   (block math)
     text = re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", text, flags=re.DOTALL)
+    # \( ... \)  ->  $ ... $     (inline math)
     text = re.sub(r"\\\((.+?)\\\)", r"$\1$", text, flags=re.DOTALL)
+    # (\displaystyle ...)  ->  $ ... $
     text = re.sub(r"\(\\displaystyle\s+(.+?)\)", r"$\1$", text)
+    # Generic catch-all: any (...) whose contents contain a LaTeX command
+    # (a backslash followed by letters, e.g. \frac, \tfrac, \sqrt, \sum)
+    # but that ISN'T already wrapped in $ — convert it too. Skips short
+    # things like "(a)=acceleration" since those have no backslash command.
+    def _wrap_if_latex(match):
+        inner = match.group(1)
+        if re.search(r"\\[a-zA-Z]+", inner):
+            return f"${inner}$"
+        return match.group(0)  # leave plain parentheses alone
+
+    text = re.sub(r"(?<!\$)\(([^()]*\\[a-zA-Z][^()]*)\)(?!\$)", _wrap_if_latex, text)
     return text
 
 # -----------------------------------------------------------------------------
@@ -314,14 +358,14 @@ if st.session_state.get("last_subject") != subject:
 # -----------------------------------------------------------------------------
 # 11. Chat UI
 # -----------------------------------------------------------------------------
-st.title("🔥 Aura | Exam Prep Tutor")
+flame_title("Aura | Exam Prep Tutor", size=32)
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
 if "editing_index" not in st.session_state:
     st.session_state.editing_index = None
 
 for i, msg in enumerate(st.session_state.messages):
-    avatar = "🔥" if msg["role"] == "assistant" else "👤"
+    avatar = FLAME_ICON_PATH if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
         st.markdown(display_content)
@@ -411,7 +455,7 @@ def send_and_respond(text: str):
     ]
 
     full_response = ""
-    with st.chat_message("assistant", avatar="🔥"):
+    with st.chat_message("assistant", avatar=FLAME_ICON_PATH):
         response_placeholder = st.empty()
         try:
             completion = client.chat.completions.create(
