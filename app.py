@@ -11,6 +11,7 @@ import db
 import payment
 
 FLAME_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "flame_icon.png")
+FLAME_ICON_EXISTS = os.path.isfile(FLAME_ICON_PATH)
 try:
     _page_icon = Image.open(FLAME_ICON_PATH)
 except Exception:
@@ -235,7 +236,10 @@ tier_info = config.MODEL_TIERS[current_tier]
 with st.sidebar:
     logo_col, title_col = st.columns([1, 4])
     with logo_col:
-        st.image(FLAME_ICON_PATH, width=40)
+        if FLAME_ICON_EXISTS:
+            st.image(FLAME_ICON_PATH, width=40)
+        else:
+            st.markdown("### 🔥")
     with title_col:
         st.markdown("## **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
@@ -365,7 +369,7 @@ if "editing_index" not in st.session_state:
     st.session_state.editing_index = None
 
 for i, msg in enumerate(st.session_state.messages):
-    avatar = FLAME_ICON_PATH if msg["role"] == "assistant" else "👤"
+    avatar = (FLAME_ICON_PATH if FLAME_ICON_EXISTS else "🔥") if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
         st.markdown(display_content)
@@ -455,7 +459,7 @@ def send_and_respond(text: str):
     ]
 
     full_response = ""
-    with st.chat_message("assistant", avatar=FLAME_ICON_PATH):
+    with st.chat_message("assistant", avatar=(FLAME_ICON_PATH if FLAME_ICON_EXISTS else "🔥")):
         response_placeholder = st.empty()
         try:
             completion = client.chat.completions.create(
