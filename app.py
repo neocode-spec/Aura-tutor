@@ -4,31 +4,12 @@ from datetime import date, timedelta
 
 import streamlit as st
 from groq import Groq
-from PIL import Image
 
 import config
 import db
 import payment
 
-FLAME_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "flame_icon.png")
-FLAME_ICON_EXISTS = os.path.isfile(FLAME_ICON_PATH)
-try:
-    _page_icon = Image.open(FLAME_ICON_PATH)
-except Exception:
-    _page_icon = "🔥"  # fallback if the asset didn't make it into the deploy
-
-import base64
-try:
-    with open(FLAME_ICON_PATH, "rb") as f:
-        _FLAME_B64 = base64.b64encode(f.read()).decode()
-    FLAME_IMG_TAG = f'<img src="data:image/png;base64,{_FLAME_B64}" width="{{size}}" style="vertical-align:middle;margin-right:8px;">'
-except Exception:
-    FLAME_IMG_TAG = "🔥"  # fallback — plain emoji if the asset is missing
-
-def flame_title(text: str, size: int = 36):
-    """Renders a title with the real gradient flame image instead of the plain emoji."""
-    icon_html = FLAME_IMG_TAG.format(size=size) if "{size}" in FLAME_IMG_TAG else FLAME_IMG_TAG
-    st.markdown(f'<h1 style="display:flex;align-items:center;">{icon_html}{text}</h1>', unsafe_allow_html=True)
+_page_icon = "🔥"
 
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
@@ -308,6 +289,10 @@ YOUR TEACHING METHODOLOGY:
 3. Marking-Scheme Aligned: Emphasize standard definitions, formulas, and keywords examiners award points for.
 4. Analogies & Intuition: Explain concepts with real-world analogies before formulas or syntax.
 5. Tone: Encouraging, structured, patient, but firm on technical accuracy.
+6. Accuracy Check: Before giving a final numeric answer, work through the calculation step by step and
+   verify each arithmetic step. If you find an error partway through, correct it silently and redo the
+   steps from that point — never show a wrong intermediate value that you then "fix" later, since a
+   student revising for an exam needs every line to be trustworthy, not just the final answer.
 
 MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
 - Every formula or equation MUST be wrapped in LaTeX dollar-sign delimiters, nothing else.
@@ -316,6 +301,12 @@ MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
 - NEVER wrap formulas in plain parentheses like (\\displaystyle ...) — that does not render and shows up as broken text.
 - NEVER use \\[ \\] or \\( \\) delimiters — only $ and $$.
 - In tables, formulas still need $ delimiters around them, e.g. a table cell should contain $s = ut + \\tfrac{{1}}{{2}}at^2$, not the raw LaTeX with no dollar signs.
+- ONLY the actual symbols/numbers go inside $ — never English words. Math mode ignores spaces, so English inside $ renders as one squished word.
+  WRONG: $Use the formula \\Delta = b^2-4ac$
+  RIGHT: Use the formula $\\Delta = b^2-4ac$
+- NEVER split one formula across multiple separate $ pairs. Wrap the ENTIRE formula in ONE pair, start to finish.
+  WRONG: Q = \\varepsilon\\sigma A$T^4 - T_{{env}}^4$\\,t
+  RIGHT: $Q = \\varepsilon\\sigma A (T^4 - T_{{env}}^4)\\,t$
 """
 
 
@@ -343,6 +334,62 @@ def fix_math_formatting(text: str) -> str:
         return match.group(0)  # leave plain parentheses alone
 
     text = re.sub(r"(?<!\$)\(([^()]*\\[a-zA-Z][^()]*)\)(?!\$)", _wrap_if_latex, text)
+
+    # Fix 4: healing a formula the model SPLIT across multiple $ pairs, e.g.
+    # "Q = \varepsilon\sigma A$T^4 - T_env^4$\,t" — raw LaTeX commands leak
+    # outside the $ on the same line. Detect that leakage and re-wrap the
+    # WHOLE line as one formula instead of a half-rendered mess.
+    def _heal_line(line: str) -> str:
+        if "$" not in line:
+            return line
+        non_math = re.sub(r"\${1,2}[^$]*\${1,2}", "", line)
+        if re.search(r"\\[a-zA-Z]+", non_math):
+            was_block = line.strip().startswith("$$")
+            merged = re.sub(r"\s+", " ", line.replace("$", " ")).strip()
+            if merged:
+                wrap = "$$" if was_block else "$"
+                return f"{wrap}{merged}{wrap}"
+        return line
+
+    text = "\n".join(_heal_line(ln) for ln in text.split("\n"))
+
+    # Fix 5: peeling English words out of the FRONT of a $...$ block, e.g.
+    # "$Use the formula \Delta = b^2-4ac$" renders as squished text with no
+    # spaces because math mode ignores whitespace. Move the English prefix
+    # outside the delimiters, keep only the real formula inside.
+    def _peel_prefix(match):
+        inner = match.group(1)
+        m = re.match(r"^([A-Za-z][A-Za-z\s]{4,}?)\s*(?=(\\[a-zA-Z]|[=]))", inner)
+        if m:
+            prefix = m.group(1).strip()
+            rest = inner[len(m.group(0)):].strip()
+            if rest:
+                return f"{prefix} ${rest}$"
+        return match.group(0)
+
+    text = re.sub(r"\$([^$]+)\$", _peel_prefix, text)
+
+    # Fix 6: ensure a space around inline $...$ math when the model glues it
+    # directly onto adjacent words with no space, e.g. "V$=IR$where" — the
+    # formula itself is valid, it just needs breathing room so it doesn't
+    # visually run into the surrounding sentence.
+    # Fix 6: ensure a space around inline $...$ math when the model glues it
+    # directly onto adjacent words with no space, e.g. "V$=IR$where" — the
+    # formula itself is valid, it just needs breathing room from the sentence.
+    # Must split into segments first — two consecutive formulas like
+    # "$a$ and $b$" would otherwise let a blind regex misread the closing $
+    # of the first and the opening $ of the second as one fake pair spanning
+    # " and " as if it were formula content.
+    segments = re.split(r"(\$[^$]+\$)", text)
+    for i, seg in enumerate(segments):
+        is_token = i % 2 == 1  # odd indices are the captured $...$ tokens
+        if not is_token or not seg:
+            continue
+        if i > 0 and segments[i - 1] and re.search(r"[A-Za-z0-9]$", segments[i - 1]):
+            segments[i - 1] += " "
+        if i < len(segments) - 1 and segments[i + 1] and re.match(r"^[A-Za-z0-9]", segments[i + 1]):
+            segments[i + 1] = " " + segments[i + 1]
+    text = "".join(segments)
     return text
 
 # -----------------------------------------------------------------------------
