@@ -163,7 +163,7 @@ if "student" not in st.session_state:
             st.session_state.student = restored
             st.rerun()
 
-    flame_title("Aura Tutor Studio")
+    st.title("🔥 Aura Tutor Studio")
     st.caption("Targeted exam preparation & concept mastery engine.")
 
     check_email = st.text_input("Your email", key="check_email").strip().lower()
@@ -217,10 +217,7 @@ tier_info = config.MODEL_TIERS[current_tier]
 with st.sidebar:
     logo_col, title_col = st.columns([1, 4])
     with logo_col:
-        if FLAME_ICON_EXISTS:
-            st.image(FLAME_ICON_PATH, width=40)
-        else:
-            st.markdown("### 🔥")
+        st.markdown("### 🔥")
     with title_col:
         st.markdown("## **Aura Tutor Studio**")
     st.caption(f"Welcome back, {student['name']}")
@@ -254,7 +251,7 @@ with st.sidebar:
 if current_tier == config.FREE_TIER_NAME:
     used_today = db.get_today_usage(student["id"])
     if used_today >= tier_info["daily_question_limit"]:
-        flame_title("Aura | Exam Prep Tutor", size=32)
+        st.title("🔥 Aura | Exam Prep Tutor")
         st.warning(
             f"You've used all {tier_info['daily_question_limit']} free questions for today. "
             "Come back tomorrow, or upgrade in the sidebar for unlimited access."
@@ -409,14 +406,14 @@ if st.session_state.get("last_subject") != subject:
 # -----------------------------------------------------------------------------
 # 11. Chat UI
 # -----------------------------------------------------------------------------
-flame_title("Aura | Exam Prep Tutor", size=32)
+st.title("🔥 Aura | Exam Prep Tutor")
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
 if "editing_index" not in st.session_state:
     st.session_state.editing_index = None
 
 for i, msg in enumerate(st.session_state.messages):
-    avatar = (FLAME_ICON_PATH if FLAME_ICON_EXISTS else "🔥") if msg["role"] == "assistant" else "👤"
+    avatar = "🔥" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
         display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
         st.markdown(display_content)
@@ -506,7 +503,7 @@ def send_and_respond(text: str):
     ]
 
     full_response = ""
-    with st.chat_message("assistant", avatar=(FLAME_ICON_PATH if FLAME_ICON_EXISTS else "🔥")):
+    with st.chat_message("assistant", avatar="🔥"):
         response_placeholder = st.empty()
         try:
             completion = client.chat.completions.create(
