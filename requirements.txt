@@ -2,4 +2,3 @@ streamlit
 groq
 psycopg2-binary
 requests
-Pillow
