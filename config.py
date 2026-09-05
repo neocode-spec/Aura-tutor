@@ -1,5 +1,5 @@
 """
-config.py — Curriculum data, exam levels, and Alpha model tiers for Iris
+config.py — Curriculum data, exam levels, and Alpha model tiers for Aura
 """
 
 # -----------------------------------------------------------------------------
@@ -49,9 +49,11 @@ EXAM_LEVELS = [
 ]
 
 # -----------------------------------------------------------------------------
-# Alpha Model Tiers
+# Aura Model Tiers
 # Groq model IDs — verify current names at console.groq.com/docs/models,
-# Groq deprecates/renames models periodically.
+# Groq deprecates/renames models periodically (llama-3.1-8b-instant and
+# llama-3.3-70b-versatile were retired Aug 16, 2026; replaced below with
+# their recommended successors).
 # -----------------------------------------------------------------------------
 MODEL_TIERS = {
     "Aura Alpha": {
