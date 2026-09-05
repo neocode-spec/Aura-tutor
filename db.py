@@ -156,6 +156,34 @@ def get_security_question(email: str):
     return None
 
 
+def account_exists_without_security_question(email: str) -> bool:
+    """True for older accounts made before security questions existed — these
+    need recovery, not a fresh signup (which would fail on the duplicate email)."""
+    row = find_student_by_email(email)
+    return bool(row) and not row.get("security_question")
+
+
+def set_security_question(email: str, security_question: str, security_answer: str):
+    """Adds a security question to an EXISTING account that doesn't have one yet
+    (the recovery path for accounts created before this feature existed).
+    Updates in place — does not create a new row."""
+    row = find_student_by_email(email)
+    if not row:
+        raise ValueError("No account found with this email.")
+    ans_hashed, ans_salt = _hash_answer(security_answer.strip().lower())
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE students SET security_question = %s, security_answer_hash = %s,
+               security_answer_salt = %s WHERE email = %s RETURNING *""",
+            (security_question, ans_hashed, ans_salt, email),
+        )
+        updated = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return updated
+
+
 def authenticate_with_security(email: str, security_answer: str):
     """Returns the student row if the security answer is correct, else None."""
     row = find_student_by_email(email)
