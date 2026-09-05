@@ -9,11 +9,11 @@ import config
 import db
 import payment
 
-_page_icon = "🔥"
-
 # -----------------------------------------------------------------------------
 # 1. Page Configuration
 # -----------------------------------------------------------------------------
+_page_icon = "🔥"
+
 st.set_page_config(
     page_title="Aura — AI Exam Prep Tutor",
     page_icon=_page_icon,
@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 2. Custom CSS — blue/purple gradient brand
+# 2. Custom CSS — dark theme, blue/purple gradient
 # -----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -36,14 +36,13 @@ st.markdown("""
         color: white; border: none; border-radius: 8px; font-weight: 600; transition: all 0.3s ease;
     }
     .stButton > button:hover {
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        background: linear-gradient(135deg, #6366f1 0%, #9333ea 100%);
         box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
     }
     [data-testid="stChatMessage"] {
         background-color: #16161f; border: 1px solid #232330; border-radius: 12px;
         padding: 12px; margin-bottom: 10px;
     }
-    /* Borderless, minimal dropdowns — like a model picker */
     div[data-testid="stSelectbox"] > div > div {
         background-color: transparent !important;
         border: none !important;
@@ -70,26 +69,30 @@ except Exception as e:
 # 3b. Admin dashboard — visit yourURL?admin=1, password-gated
 # -----------------------------------------------------------------------------
 if st.query_params.get("admin") == "1":
-    st.title("🔥 Aura — Admin Dashboard")
+    st.title("📊 Aura Admin Dashboard")
     admin_password = os.getenv("ADMIN_PASSWORD", "")
-    entered = st.text_input("Admin password", type="password")
+
     if not admin_password:
-        st.error("ADMIN_PASSWORD is not set in your Render environment yet — set it to use this page.")
+        st.error("ADMIN_PASSWORD is not set on Render. Add it in Environment settings to use this page.")
         st.stop()
+
+    entered = st.text_input("Admin password", type="password")
     if entered != admin_password:
         if entered:
-            st.error("Wrong password.")
+            st.error("Incorrect password.")
         st.stop()
 
     stats = db.get_admin_stats()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total students", stats["total_students"])
-    c2.metric("Signups today", stats["signups_today"])
-    c3.metric("Active today", stats["active_today"])
-    c4, c5, c6 = st.columns(3)
-    c4.metric("Alpha+ subscribers", stats["alpha_plus_subscribers"])
-    c5.metric("Revenue (₦, all-time)", f"₦{stats['total_revenue']:,}")
-    c6.metric("Questions asked today", stats["questions_today"])
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total students", stats["total_students"])
+    col2.metric("Signups today", stats["signups_today"])
+    col3.metric("Active today", stats["active_today"])
+
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Alpha+ subscribers", stats["alpha_plus_subscribers"])
+    col5.metric("Total revenue", f"₦{stats['total_revenue']:,}")
+    col6.metric("Questions today", stats["questions_today"])
 
     st.divider()
     st.subheader("Most recent signups")
@@ -126,7 +129,6 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     payment_row = db.get_payment(tx_ref)
 
     if verified and payment_row and payment_row["status"] != "successful":
-        # double-check the amount actually matches what we charged for
         if int(float(verified["amount"])) >= payment_row["amount_ngn"]:
             db.mark_payment_status(tx_ref, "successful", transaction_id)
             active_until = date.today() + timedelta(days=30)
@@ -144,7 +146,8 @@ if "transaction_id" in query_params and "tx_ref" in query_params:
     st.query_params.clear()
 
 # -----------------------------------------------------------------------------
-# 5. Login (creates memory profile)
+# 5. Login — security question only, no password. Session persists across
+#    refresh via a token stored in the URL.
 # -----------------------------------------------------------------------------
 SECURITY_QUESTIONS = [
     "What is your favorite subject?",
@@ -155,7 +158,6 @@ SECURITY_QUESTIONS = [
 ]
 
 if "student" not in st.session_state:
-    # ---- Refresh persistence: if a valid session token is in the URL, restore it automatically ----
     session_token = st.query_params.get("session")
     if session_token:
         restored = db.find_student_by_token(session_token)
@@ -172,7 +174,6 @@ if "student" not in st.session_state:
         existing_question = db.get_security_question(check_email)
 
         if existing_question:
-            # ---- Returning student: log in with security answer ----
             st.caption(f"Welcome back! Security question: **{existing_question}**")
             with st.form("login"):
                 answer = st.text_input("Your answer")
@@ -186,7 +187,6 @@ if "student" not in st.session_state:
                     else:
                         st.error("That answer doesn't match. Try again.")
         else:
-            # ---- New student: sign up with name + security Q&A ----
             st.caption("New here — let's set up your account.")
             with st.form("signup"):
                 name = st.text_input("Your name")
@@ -198,12 +198,19 @@ if "student" not in st.session_state:
                     if not (name and security_answer):
                         st.error("Please enter your name and an answer.")
                     else:
-                        new_student = db.create_student(
-                            name.strip(), check_email, stream, security_question, security_answer.strip()
-                        )
-                        st.session_state.student = new_student
-                        st.query_params["session"] = db.get_or_create_session_token(new_student["id"])
-                        st.rerun()
+                        try:
+                            new_student = db.create_student(
+                                name.strip(), check_email, stream, security_question, security_answer.strip()
+                            )
+                            st.session_state.student = new_student
+                            st.query_params["session"] = db.get_or_create_session_token(new_student["id"])
+                            st.rerun()
+                        except ValueError:
+                            st.error(
+                                "An account with this email already exists but has no security "
+                                "question on file (likely an older account). Try a different email, "
+                                "or contact support to reset it."
+                            )
 
     st.stop()
 
@@ -212,7 +219,7 @@ current_tier = db.get_student_tier(student["id"])
 tier_info = config.MODEL_TIERS[current_tier]
 
 # -----------------------------------------------------------------------------
-# 6. Sidebar — subject, exam level, stream-filtered subjects, tier
+# 6. Sidebar — stream, subject, exam level, tier status
 # -----------------------------------------------------------------------------
 with st.sidebar:
     logo_col, title_col = st.columns([1, 4])
@@ -223,8 +230,10 @@ with st.sidebar:
     st.caption(f"Welcome back, {student['name']}")
     st.divider()
 
-    stream = st.selectbox("🧭 Stream", list(config.STREAMS.keys()),
-                           index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0)
+    stream = st.selectbox(
+        "🧭 Stream", list(config.STREAMS.keys()),
+        index=list(config.STREAMS.keys()).index(student["stream"]) if student["stream"] in config.STREAMS else 0,
+    )
 
     subject = st.selectbox("📚 Select Subject", config.subjects_for_stream(stream))
 
@@ -254,7 +263,7 @@ if current_tier == config.FREE_TIER_NAME:
         st.title("🔥 Aura | Exam Prep Tutor")
         st.warning(
             f"You've used all {tier_info['daily_question_limit']} free questions for today. "
-            "Come back tomorrow, or upgrade in the sidebar for unlimited access."
+            "Come back tomorrow, or upgrade using the dropdown above the chat box for unlimited access."
         )
         st.stop()
 
@@ -298,44 +307,31 @@ MATH FORMATTING — FOLLOW EXACTLY, THIS IS STRICT:
 - NEVER wrap formulas in plain parentheses like (\\displaystyle ...) — that does not render and shows up as broken text.
 - NEVER use \\[ \\] or \\( \\) delimiters — only $ and $$.
 - In tables, formulas still need $ delimiters around them, e.g. a table cell should contain $s = ut + \\tfrac{{1}}{{2}}at^2$, not the raw LaTeX with no dollar signs.
-- ONLY the actual symbols/numbers go inside $ — never English words. Math mode ignores spaces, so English inside $ renders as one squished word.
-  WRONG: $Use the formula \\Delta = b^2-4ac$
-  RIGHT: Use the formula $\\Delta = b^2-4ac$
-- NEVER split one formula across multiple separate $ pairs. Wrap the ENTIRE formula in ONE pair, start to finish.
-  WRONG: Q = \\varepsilon\\sigma A$T^4 - T_{{env}}^4$\\,t
-  RIGHT: $Q = \\varepsilon\\sigma A (T^4 - T_{{env}}^4)\\,t$
 """
 
 
 def fix_math_formatting(text: str) -> str:
     """
     Safety net — models sometimes ignore the $ instruction and output
-    \\( \\), \\[ \\], (\\displaystyle ...), or plain (...) containing raw
-    LaTeX commands. Convert all of those to proper $ / $$ delimiters so
-    Streamlit actually renders the math instead of showing broken text.
+    \\( \\), \\[ \\], (\\displaystyle ...), plain (...) containing raw LaTeX
+    commands, split formulas across broken $ boundaries, English prose leaked
+    inside $ delimiters, formulas glued directly onto adjacent words with no
+    space, or bare LaTeX commands with no delimiters anywhere at all. This
+    converts all of those into clean, correctly-delimited math so Streamlit
+    actually renders it instead of showing broken text.
     """
-    # \[ ... \]  ->  $$ ... $$   (block math)
     text = re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", text, flags=re.DOTALL)
-    # \( ... \)  ->  $ ... $     (inline math)
     text = re.sub(r"\\\((.+?)\\\)", r"$\1$", text, flags=re.DOTALL)
-    # (\displaystyle ...)  ->  $ ... $
     text = re.sub(r"\(\\displaystyle\s+(.+?)\)", r"$\1$", text)
-    # Generic catch-all: any (...) whose contents contain a LaTeX command
-    # (a backslash followed by letters, e.g. \frac, \tfrac, \sqrt, \sum)
-    # but that ISN'T already wrapped in $ — convert it too. Skips short
-    # things like "(a)=acceleration" since those have no backslash command.
+
     def _wrap_if_latex(match):
         inner = match.group(1)
         if re.search(r"\\[a-zA-Z]+", inner):
             return f"${inner}$"
-        return match.group(0)  # leave plain parentheses alone
+        return match.group(0)
 
     text = re.sub(r"(?<!\$)\(([^()]*\\[a-zA-Z][^()]*)\)(?!\$)", _wrap_if_latex, text)
 
-    # Fix 4: healing a formula the model SPLIT across multiple $ pairs, e.g.
-    # "Q = \varepsilon\sigma A$T^4 - T_env^4$\,t" — raw LaTeX commands leak
-    # outside the $ on the same line. Detect that leakage and re-wrap the
-    # WHOLE line as one formula instead of a half-rendered mess.
     def _heal_line(line: str) -> str:
         if "$" not in line:
             return line
@@ -350,10 +346,6 @@ def fix_math_formatting(text: str) -> str:
 
     text = "\n".join(_heal_line(ln) for ln in text.split("\n"))
 
-    # Fix 5: peeling English words out of the FRONT of a $...$ block, e.g.
-    # "$Use the formula \Delta = b^2-4ac$" renders as squished text with no
-    # spaces because math mode ignores whitespace. Move the English prefix
-    # outside the delimiters, keep only the real formula inside.
     def _peel_prefix(match):
         inner = match.group(1)
         m = re.match(r"^([A-Za-z][A-Za-z\s]{4,}?)\s*(?=(\\[a-zA-Z]|[=]))", inner)
@@ -366,20 +358,9 @@ def fix_math_formatting(text: str) -> str:
 
     text = re.sub(r"\$([^$]+)\$", _peel_prefix, text)
 
-    # Fix 6: ensure a space around inline $...$ math when the model glues it
-    # directly onto adjacent words with no space, e.g. "V$=IR$where" — the
-    # formula itself is valid, it just needs breathing room so it doesn't
-    # visually run into the surrounding sentence.
-    # Fix 6: ensure a space around inline $...$ math when the model glues it
-    # directly onto adjacent words with no space, e.g. "V$=IR$where" — the
-    # formula itself is valid, it just needs breathing room from the sentence.
-    # Must split into segments first — two consecutive formulas like
-    # "$a$ and $b$" would otherwise let a blind regex misread the closing $
-    # of the first and the opening $ of the second as one fake pair spanning
-    # " and " as if it were formula content.
     segments = re.split(r"(\$[^$]+\$)", text)
     for i, seg in enumerate(segments):
-        is_token = i % 2 == 1  # odd indices are the captured $...$ tokens
+        is_token = i % 2 == 1
         if not is_token or not seg:
             continue
         if i > 0 and segments[i - 1] and re.search(r"[A-Za-z0-9]$", segments[i - 1]):
@@ -387,7 +368,24 @@ def fix_math_formatting(text: str) -> str:
         if i < len(segments) - 1 and segments[i + 1] and re.match(r"^[A-Za-z0-9]", segments[i + 1]):
             segments[i + 1] = " " + segments[i + 1]
     text = "".join(segments)
+
+    def _wrap_bare_latex(segment: str) -> str:
+        pattern = (
+            r"\\[a-zA-Z]+"
+            r"(?:\{[^{}]*\})*"
+            r"(?:\^\{?[a-zA-Z0-9]*\}?|_\{?[a-zA-Z0-9]*\}?)*"
+            r"(?:\s*[=+\-*/]\s*[a-zA-Z0-9.\-]+)*"
+        )
+        return re.sub(pattern, lambda m: f"${m.group(0)}$", segment)
+
+    protected = re.split(r"(\${1,2}[^$]+\${1,2})", text)
+    for i, seg in enumerate(protected):
+        if i % 2 == 0 and "\\" in seg:
+            protected[i] = _wrap_bare_latex(seg)
+    text = "".join(protected)
+
     return text
+
 
 # -----------------------------------------------------------------------------
 # 10. Load persistent chat history — resets whenever the student switches subject
@@ -403,37 +401,37 @@ if st.session_state.get("last_subject") != subject:
             "content": f"Hello! I'm **Aura** 🔥. Ready to master **{subject}** for your {exam_target}?\n\nWhat specific topic or question are we tackling today?"
         }]
 
+if "editing_index" not in st.session_state:
+    st.session_state.editing_index = None
+
 # -----------------------------------------------------------------------------
 # 11. Chat UI
 # -----------------------------------------------------------------------------
 st.title("🔥 Aura | Exam Prep Tutor")
 st.caption(f"Active Session: **{subject}** | Exam: **{exam_target}** | Plan: **{current_tier}**")
 
-if "editing_index" not in st.session_state:
-    st.session_state.editing_index = None
-
 for i, msg in enumerate(st.session_state.messages):
+    display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
     avatar = "🔥" if msg["role"] == "assistant" else "👤"
     with st.chat_message(msg["role"], avatar=avatar):
-        display_content = fix_math_formatting(msg["content"]) if msg["role"] == "assistant" else msg["content"]
         st.markdown(display_content)
         if msg["role"] == "user":
-            btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+            btn_col1, btn_col2, _ = st.columns([1, 1, 8])
             with btn_col1:
-                if st.button("✏️ Edit", key=f"edit_{i}"):
+                if st.button("✏️", key=f"edit_{i}", help="Edit this message"):
                     st.session_state.editing_index = i
                     st.rerun()
             with btn_col2:
-                # Copy runs entirely client-side (no rerun) via clipboard JS
-                safe_text = msg["content"].replace("`", "\\`").replace("</script>", "")
+                escaped = msg["content"].replace("`", "\\`").replace("\\", "\\\\").replace("\n", "\\n").replace("'", "\\'")
                 st.markdown(
-                    f"""<button onclick="navigator.clipboard.writeText(`{safe_text}`)"
-                        style="background:transparent;border:none;color:#8b5cf6;cursor:pointer;font-size:0.85em;">
-                        📋 Copy</button>""",
+                    f"""<button onclick="navigator.clipboard.writeText('{escaped}')"
+                        style="background:none;border:none;cursor:pointer;font-size:16px;">📋</button>""",
                     unsafe_allow_html=True,
                 )
 
-# ---- Inline model badge/picker, sits just above the input like a model selector ----
+# -----------------------------------------------------------------------------
+# 12. Inline model badge/picker, sits just above the input like a model selector
+# -----------------------------------------------------------------------------
 active_model = tier_info["model"]
 active_label = current_tier.replace("Aura ", "")
 premium_used_today = db.get_today_usage(student["id"])
@@ -462,7 +460,6 @@ if choice.startswith("🔥 Alpha+"):
         active_model = config.MODEL_TIERS["Aura Alpha"]["model"]
         active_label = "Alpha (Alpha+ daily limit reached)"
     else:
-        # Not subscribed yet — send them straight to payment
         st.info("Alpha+ is ₦500 — unlocks the full-power model for 9 requests/day.")
         if st.button("Unlock Alpha+ — ₦500", use_container_width=True):
             try:
@@ -491,8 +488,11 @@ active_max_tokens = (
     else config.MODEL_TIERS["Aura Alpha"]["max_tokens"]
 )
 
+
+# -----------------------------------------------------------------------------
+# 13. Shared send-and-respond logic (used by both normal input and edit-resend)
+# -----------------------------------------------------------------------------
 def send_and_respond(text: str):
-    """Sends a user message, streams Aura's reply, saves both, tracks usage."""
     st.session_state.messages.append({"role": "user", "content": text})
     db.save_message(student["id"], subject, exam_target, "user", text)
     with st.chat_message("user", avatar="👤"):
@@ -502,9 +502,9 @@ def send_and_respond(text: str):
         {"role": m["role"], "content": m["content"]} for m in st.session_state.messages
     ]
 
-    full_response = ""
     with st.chat_message("assistant", avatar="🔥"):
         response_placeholder = st.empty()
+        full_response = ""
         try:
             completion = client.chat.completions.create(
                 model=active_model,
@@ -525,28 +525,37 @@ def send_and_respond(text: str):
     if full_response:
         st.session_state.messages.append({"role": "assistant", "content": full_response})
         db.save_message(student["id"], subject, exam_target, "assistant", full_response)
-        if current_tier == config.FREE_TIER_NAME:
+        if active_model == config.MODEL_TIERS["Aura Alpha+"]["model"]:
             db.increment_usage(student["id"])
-        elif current_tier == "Aura Alpha+" and active_model == config.MODEL_TIERS["Aura Alpha+"]["model"]:
+        elif current_tier == config.FREE_TIER_NAME:
             db.increment_usage(student["id"])
 
 
-# ---- Handle an in-progress edit (resubmit truncates history from that point) ----
+# -----------------------------------------------------------------------------
+# 14. Editing an earlier message
+# -----------------------------------------------------------------------------
 if st.session_state.get("editing_index") is not None:
     idx = st.session_state.editing_index
+    original_text = st.session_state.messages[idx]["content"]
+    st.info("Editing your message — this will replace it and everything after it.")
     with st.form("edit_form"):
-        edited_text = st.text_area("Edit your message", value=st.session_state.messages[idx]["content"])
-        col_a, col_b = st.columns(2)
-        resubmit = col_a.form_submit_button("Resubmit", use_container_width=True)
-        cancel = col_b.form_submit_button("Cancel", use_container_width=True)
-    if resubmit:
-        st.session_state.messages = st.session_state.messages[:idx]
-        st.session_state.editing_index = None
-        send_and_respond(edited_text)
-        st.rerun()
+        edited_text = st.text_area("Edit your message", value=original_text)
+        col_save, col_cancel = st.columns(2)
+        save = col_save.form_submit_button("Save & resend", use_container_width=True)
+        cancel = col_cancel.form_submit_button("Cancel", use_container_width=True)
+
     if cancel:
         st.session_state.editing_index = None
         st.rerun()
 
+    if save:
+        st.session_state.messages = st.session_state.messages[:idx]
+        st.session_state.editing_index = None
+        send_and_respond(edited_text)
+        st.rerun()
+
+# -----------------------------------------------------------------------------
+# 15. Normal chat input
+# -----------------------------------------------------------------------------
 if user_input := st.chat_input("Ask a question, request a practice drill, or paste a problem..."):
     send_and_respond(user_input)
