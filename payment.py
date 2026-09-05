@@ -1,12 +1,12 @@
 """
-payment.py — Flutterwave Standard Checkout (v3 API) for Iris tier upgrades
+payment.py — Flutterwave Standard Checkout (v3 API) for Aura tier upgrades
 
 Set these in your environment / Render settings:
     FLW_PUBLIC_KEY=FLWPUBK_TEST-xxxx   (safe to expose client-side)
     FLW_SECRET_KEY=FLWSECK_TEST-xxxx   (NEVER expose this one — server only)
 
-v3 remains Flutterwave's stable production API as of 2026; v4 (OAuth-based)
-exists in beta — migrate later if you want, but v3 works fine for this.
+v3 remains Flutterwave's stable production API; v4 (OAuth-based) exists in
+beta — migrate later if you want, but v3 works fine for this.
 """
 
 import os
@@ -14,7 +14,9 @@ import uuid
 import requests
 import streamlit as st
 
+
 def _get_secret(key: str, default: str = "") -> str:
+    """Read from env var first, then Streamlit secrets if available (won't crash if no secrets.toml exists)."""
     value = os.getenv(key)
     if value:
         return value
@@ -33,7 +35,7 @@ def initiate_payment(student_email: str, student_name: str, tier: str, amount_ng
     Creates a Flutterwave Standard Checkout link.
     Returns (tx_ref, payment_link) or raises an exception on failure.
     """
-    tx_ref = f"iris-{uuid.uuid4().hex[:12]}"
+    tx_ref = f"aura-{uuid.uuid4().hex[:12]}"
 
     payload = {
         "tx_ref": tx_ref,
