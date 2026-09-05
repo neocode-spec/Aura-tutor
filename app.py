@@ -186,6 +186,23 @@ if "student" not in st.session_state:
                         st.rerun()
                     else:
                         st.error("That answer doesn't match. Try again.")
+
+        elif db.account_exists_without_security_question(check_email):
+            # ---- Old account from before security questions existed: recover it ----
+            st.warning("This account was created before security questions were added. Set one now to get back in.")
+            with st.form("recover"):
+                security_question = st.selectbox("Pick a security question", SECURITY_QUESTIONS)
+                security_answer = st.text_input("Your answer")
+                submitted = st.form_submit_button("Set security question & log in")
+                if submitted:
+                    if not security_answer:
+                        st.error("Please enter an answer.")
+                    else:
+                        recovered = db.set_security_question(check_email, security_question, security_answer.strip())
+                        st.session_state.student = recovered
+                        st.query_params["session"] = db.get_or_create_session_token(recovered["id"])
+                        st.rerun()
+
         else:
             st.caption("New here — let's set up your account.")
             with st.form("signup"):
@@ -205,12 +222,8 @@ if "student" not in st.session_state:
                             st.session_state.student = new_student
                             st.query_params["session"] = db.get_or_create_session_token(new_student["id"])
                             st.rerun()
-                        except ValueError:
-                            st.error(
-                                "An account with this email already exists but has no security "
-                                "question on file (likely an older account). Try a different email, "
-                                "or contact support to reset it."
-                            )
+                        except ValueError as e:
+                            st.error(str(e))
 
     st.stop()
 
