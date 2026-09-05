@@ -1,5 +1,5 @@
 """
-db.py — Neon Postgres connection, schema, and memory helpers for Iris
+db.py — Neon Postgres connection, schema, and memory helpers for Aura
 
 Set NEON_DATABASE_URL in your environment or Render settings:
     postgresql://user:password@ep-xxxx.neon.tech/dbname?sslmode=require
@@ -44,10 +44,15 @@ def init_schema():
         security_question TEXT,
         security_answer_hash TEXT,
         security_answer_salt TEXT,
-        session_token TEXT UNIQUE,
         stream TEXT,
         tier TEXT DEFAULT 'Aura Alpha',
         tier_active_until DATE,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
         created_at TIMESTAMP DEFAULT NOW()
     );
 
@@ -83,15 +88,13 @@ def init_schema():
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(schema_sql)
-        # Safe upgrades for tables that existed before these columns were added.
-        # Every ALTER here is IF NOT EXISTS, so this never breaks on a fresh DB
-        # and never breaks on a DB that already has these columns.
+        # Safe upgrades for tables that existed before these columns/tables
+        # were added. Every statement here is IF NOT EXISTS, so this never
+        # breaks on a fresh DB and never breaks on one that's already current.
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_question TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_hash TEXT")
         cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS security_answer_salt TEXT")
-        cur.execute("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT UNIQUE")
-        # Rebrand migration: any student created back when tiers were named "Iris Alpha"
-        # gets moved to the new "Aura Alpha" naming, so nothing breaks after the rename.
+        # Rebrand migration: any student created back when tiers were named "Iris ..."
         cur.execute("UPDATE students SET tier = 'Aura Alpha' WHERE tier = 'Iris Alpha'")
         cur.execute("UPDATE students SET tier = 'Aura Alpha+' WHERE tier = 'Iris Alpha+'")
     conn.commit()
@@ -114,31 +117,6 @@ def _verify_answer(answer: str, stored_hash: str, stored_salt: str) -> bool:
         return False
     check_hash, _ = _hash_answer(answer, stored_salt)
     return pysecrets.compare_digest(check_hash, stored_hash)
-
-
-def get_or_create_session_token(student_id):
-    """Returns this student's persistent login token, generating one if they don't have one yet."""
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT session_token FROM students WHERE id = %s", (student_id,))
-        row = cur.fetchone()
-        if row and row["session_token"]:
-            conn.close()
-            return row["session_token"]
-        token = pysecrets.token_urlsafe(24)
-        cur.execute("UPDATE students SET session_token = %s WHERE id = %s", (token, student_id))
-    conn.commit()
-    conn.close()
-    return token
-
-
-def find_student_by_token(token: str):
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM students WHERE session_token = %s", (token,))
-        row = cur.fetchone()
-    conn.close()
-    return row
 
 
 # ---------------------------------------------------------------- students --
@@ -214,6 +192,42 @@ def upgrade_student_tier(student_id, tier: str, active_until: date):
     conn.close()
 
 
+# ------------------------------------------------------------ sessions (keep login across refresh) --
+def get_or_create_session_token(student_id) -> str:
+    """Returns a durable session token for this student, creating one if needed.
+    Storing this in the URL (?session=...) lets a refresh restore login without
+    re-entering the security question every time."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT token FROM sessions WHERE student_id = %s LIMIT 1", (student_id,))
+        row = cur.fetchone()
+        if row:
+            conn.close()
+            return row["token"]
+        token = pysecrets.token_urlsafe(24)
+        cur.execute(
+            "INSERT INTO sessions (token, student_id) VALUES (%s, %s)",
+            (token, student_id),
+        )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def find_student_by_token(token: str):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT s.* FROM students s
+               JOIN sessions sess ON sess.student_id = s.id
+               WHERE sess.token = %s""",
+            (token,),
+        )
+        row = cur.fetchone()
+    conn.close()
+    return row
+
+
 # ------------------------------------------------------------ chat memory --
 def save_message(student_id, subject, exam_level, role, content):
     conn = get_connection()
@@ -245,6 +259,21 @@ def load_recent_history(student_id, subject=None, limit=30):
         rows = cur.fetchall()
     conn.close()
     return list(reversed(rows))  # oldest first
+
+
+def clear_chat_history_from(student_id, subject, keep_before_id):
+    """Deletes chat_history rows for this student/subject at or after keep_before_id.
+    Used when a student edits an earlier message — everything after that point
+    (the old answer and anything that followed) is discarded since it's being redone."""
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute(
+            """DELETE FROM chat_history
+               WHERE student_id = %s AND subject = %s AND id >= %s""",
+            (student_id, subject, keep_before_id),
+        )
+    conn.commit()
+    conn.close()
 
 
 # ------------------------------------------------------- daily usage caps --
@@ -308,7 +337,7 @@ def get_payment(tx_ref):
     return row
 
 
-# --------------------------------------------------------------- admin stats --
+# ------------------------------------------------------------- admin dashboard stats --
 def get_admin_stats():
     conn = get_connection()
     with conn.cursor() as cur:
@@ -324,7 +353,10 @@ def get_admin_stats():
         cur.execute("SELECT COALESCE(SUM(amount_ngn), 0) AS total FROM payments WHERE status = 'successful'")
         total_revenue = cur.fetchone()["total"]
 
-        cur.execute("SELECT COALESCE(SUM(question_count), 0) AS n FROM usage_log WHERE usage_date = CURRENT_DATE")
+        cur.execute(
+            """SELECT COUNT(*) AS n FROM chat_history
+               WHERE role = 'user' AND created_at::date = CURRENT_DATE"""
+        )
         questions_today = cur.fetchone()["n"]
 
         cur.execute(
